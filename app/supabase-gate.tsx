@@ -9,7 +9,8 @@ import {activeSession,signIn,signUp,supabaseConfigured,supabaseMode,type VigiaSu
 export default function SupabaseGate({children}:{children:ReactNode}) {
   const [session,setSession]=useState<VigiaSupabaseSession|null>(null);
   const [checking,setChecking]=useState(supabaseMode);
-  const [email,setEmail]=useState('');
+  const bootstrapEmail=process.env.NEXT_PUBLIC_SUPER_ADMIN_EMAIL||'';
+  const [email,setEmail]=useState(bootstrapEmail);
   const [password,setPassword]=useState('');
   const [busy,setBusy]=useState(false);
   const [error,setError]=useState('');
@@ -32,6 +33,7 @@ export default function SupabaseGate({children}:{children:ReactNode}) {
   async function activate(){
     setBusy(true);setError('');setInfo('');
     try{
+      if(bootstrapEmail&&email.trim().toLowerCase()!==bootstrapEmail.toLowerCase())throw new Error('A ativação inicial está reservada ao Super Admin.');
       const data=await signUp(email.trim(),password);
       if(typeof data.access_token==='string'&&data.access_token){setSession(data as unknown as VigiaSupabaseSession);return;}
       setInfo('Conta criada. Confirma o email recebido e depois inicia sessão.');

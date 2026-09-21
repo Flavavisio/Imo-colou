@@ -16,8 +16,8 @@ revoke all on public.workspace_snapshots from anon,authenticated;
 grant select,insert,update on public.workspace_snapshots to authenticated;
 
 create policy workspace_snapshots_select on public.workspace_snapshots for select to authenticated
-using (user_id=(select auth.uid()));
+using (user_id=(select auth.uid()) and private.is_platform_admin());
 create policy workspace_snapshots_insert on public.workspace_snapshots for insert to authenticated
-with check (user_id=(select auth.uid()));
+with check (user_id=(select auth.uid()) and private.is_platform_admin());
 create policy workspace_snapshots_update on public.workspace_snapshots for update to authenticated
-using (user_id=(select auth.uid())) with check (user_id=(select auth.uid()));
+using (user_id=(select auth.uid()) and private.is_platform_admin()) with check (user_id=(select auth.uid()) and private.is_platform_admin());

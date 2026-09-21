@@ -19,7 +19,7 @@ A v6 original continua funcional em D1/R2. O código passa a suportar um segundo
 - confirmação de email pelo Supabase
 - `flavio.rosa87@gmail.com` é promovido a Super Admin apenas depois da conta estar confirmada, através do bootstrap já configurado no banco
 - o endpoint `/api/workspace` mantém o mesmo contrato da v6, mas passa a ler/escrever `workspace_snapshots`
-- RLS limita cada snapshot ao respetivo `auth.uid()`
+- RLS limita o snapshot ao respetivo `auth.uid()` **e exige `platform_admin`** nesta fase transitória
 
 ## Porque existe `workspace_snapshots`
 
@@ -30,7 +30,7 @@ A v6 guarda toda a operação num único JSON D1. Trocar imediatamente o fronten
 4. concorrência por `revision`;
 5. isolamento por utilizador.
 
-Depois disso, cada módulo pode migrar para as tabelas normalizadas (`plans`, `camera_plans`, `resellers`, `clients`, `installations`, `cameras`, `reseller_sale_prices`, `events`) sem alterar de uma vez todo o frontend.
+Nesta fase apenas o Super Admin usa `workspace_snapshots`; contas de revendedor/cliente serão ligadas diretamente às tabelas normalizadas. Depois disso, cada módulo pode migrar para as tabelas normalizadas (`plans`, `camera_plans`, `resellers`, `clients`, `installations`, `cameras`, `reseller_sale_prices`, `events`) sem alterar de uma vez todo o frontend.
 
 ## Variáveis
 
