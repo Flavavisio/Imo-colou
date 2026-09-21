@@ -1,0 +1,38 @@
+VIGIA CLOUD — DIAGNÓSTICO DE REDE LOCAL
+
+Esta primeira ferramenta testa o acesso ao vídeo RTSP e identifica codec e resolução.
+Não grava, não recebe eventos ONVIF e não envia vídeo ou passwords para a cloud.
+O relatório é importado manualmente na app. Não é monitorização contínua.
+
+REQUISITOS
+- PC Windows, Linux ou macOS na rede da câmara.
+- Python 3.10 ou superior: https://www.python.org/downloads/
+- FFmpeg/ffprobe recente com suporte a -/i: https://ffmpeg.org/download.html
+  O comando ffprobe deve estar disponível no PATH.
+- IP privado, porta e caminho RTSP obtidos da configuração ou documentação do modelo.
+- Credenciais próprias da câmara. O acesso local da C22E depende do firmware e configuração.
+
+PASSOS
+1. Na Vigia Cloud, edita a câmara e escolhe Rede local.
+2. Define o IP privado, porta RTSP e caminho (apenas /caminho?... sem credenciais).
+3. Na área Ligações, descarrega a configuração e o ficheiro vigia-local.py.
+4. Guarda os dois ficheiros numa pasta privada do teu utilizador.
+5. Abre o terminal nessa pasta e executa:
+   python vigia-local.py --config vigia-local-config.json
+   Em sistemas onde o comando é python3, substitui python por python3.
+6. Introduz o utilizador e password localmente quando pedidos.
+7. Importa vigia-relatorio.json na câmara correspondente, na área Ligações.
+
+RESULTADOS
+stream_found: foi identificado um stream de vídeo no momento do teste.
+failed: confirma IP, porta, caminho, credenciais e suporte RTSP. Não prova que a câmara está desligada.
+tool_missing: instala ffprobe ou adiciona-o ao PATH.
+ffprobe_update_required: atualiza FFmpeg; não alteres o script para colocar passwords nos argumentos.
+
+SEGURANÇA E LIMITES
+Não abrir portas da câmara no router. O script não abre uma porta de entrada.
+A password só é usada no PC e num ficheiro temporário removido no fim do teste.
+Num PC partilhado, usa uma conta privada; no Windows, protege a pasta temporária da tua conta.
+Não partilhes credenciais ou URLs com passwords. O relatório não contém esses dados.
+O sucesso RTSP não confirma suporte a eventos de movimento/pessoas/veículos.
+A receção automática de eventos e o envio de clips exigem uma fase seguinte do conector.
