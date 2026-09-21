@@ -12,6 +12,8 @@ import {AlertDialog,AlertDialogContent,AlertDialogHeader,AlertDialogTitle,AlertD
 import {Select,SelectTrigger,SelectContent,SelectItem,SelectValue} from '@/components/ui/select';
 import {Table,TableHeader,TableBody,TableRow,TableHead,TableCell} from '@/components/ui/table';
 import {recordsSchema,emptyRecords,type Kind,type Records,type Workspace,type Reseller} from '@/lib/model';
+import SupabaseGate from './supabase-gate';
+import {workspaceFetch} from '@/lib/workspace-client';
 const nav=[['Visão geral',LayoutDashboard],['Revendedores',Building2],['Clientes',Users],['Instalações',MapPin],['Câmaras',Camera],['Ligações',Cable],['Planos',Layers],['Planos por câmara',Layers],['Carteiras e preços',Database],['Licenças',CalendarClock],['Alertas',Bell],['Eventos',Film],['Marca própria',Palette],['Armazenamento',Database]] as const;
 const kinds:Record<string,Kind>={'Revendedores':'resellers','Clientes':'clients','Instalações':'locations','Câmaras':'cameras','Planos':'plans','Planos por câmara':'cameraPlans'};
 const singular:Record<Kind,string>={cameraPlans:'plano por câmara',resellers:'revendedor',clients:'cliente',locations:'instalação',cameras:'câmara',plans:'plano'};
@@ -20,16 +22,16 @@ type Field={key:string;label:string;type?:string;options?:{id:string;name:string
 function Choice({value,onChange,options,label,disabled=false}:{value:string;onChange:(s:string)=>void;options:{id:string;name:string}[];label:string;disabled?:boolean}){return <Select disabled={disabled} value={value||'none'} onValueChange={v=>onChange(v==='none'?'':v)}><SelectTrigger aria-label={label}><SelectValue placeholder="Selecionar"/></SelectTrigger><SelectContent><SelectItem value="none">Selecionar</SelectItem>{options.map(o=><SelectItem value={o.id} key={o.id}>{o.name}</SelectItem>)}</SelectContent></Select>}
 const contrast=(hex:string)=>{const n=hex.replace('#','');const a=[0,2,4].map(i=>parseInt(n.slice(i,i+2),16)/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4);return .2126*a[0]+.7152*a[1]+.0722*a[2]>.179?'#101d32':'#ffffff'};
 const date=(s:string)=>new Date(s).toLocaleString('pt-PT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
-export default function Home(){
+function WorkspaceApp(){
  const [page,setPage]=useState('Visão geral'),[role,setRole]=useState('Super Admin'),[scope,setScope]=useState(''),[customer,setCustomer]=useState('');
  const [ws,setWs]=useState<Workspace>({records:emptyRecords,revision:0,activity:[]}),[loading,setLoading]=useState(true),[saving,setSaving]=useState(false),[loaded,setLoaded]=useState(false),[error,setError]=useState(''),[success,setSuccess]=useState('');
  const [search,setSearch]=useState(''),[filter,setFilter]=useState('all'),[modal,setModal]=useState<Kind|null>(null),[editing,setEditing]=useState(''),[form,setForm]=useState<Record<string,string>>({}),[detailId,setDetailId]=useState(''),[commercialId,setCommercialId]=useState(''),[formError,setFormError]=useState(''),[remove,setRemove]=useState<{kind:Kind;row:Row}|null>(null);
  const [brandId,setBrandId]=useState(''),[brand,setBrand]=useState(''),[color,setColor]=useState('#2563eb'),[support,setSupport]=useState(''),[logoId,setLogoId]=useState(''),[uploading,setUploading]=useState(false);
  const [calc,setCalc]=useState({cams:10,events:30,seconds:30,days:30,bitrate:2});
  const data=ws.records;
- async function load(){setLoading(true);setError('');try{const r=await fetch('/api/workspace',{cache:'no-store'});const j=await r.json() as Workspace & {error?:string};if(!r.ok)throw new Error(j.error);setWs(j);setLoaded(true);}catch(e){setError(e instanceof Error?e.message:'Erro de ligação.');}finally{setLoading(false)}}
+ async function load(){setLoading(true);setError('');try{const r=await workspaceFetch('/api/workspace',{cache:'no-store'});const j=await r.json() as Workspace & {error?:string};if(!r.ok)throw new Error(j.error);setWs(j);setLoaded(true);}catch(e){setError(e instanceof Error?e.message:'Erro de ligação.');}finally{setLoading(false)}}
  useEffect(()=>{void load()},[]);
- async function save(records:Records){setError('');setFormError('');setSuccess('');const v=recordsSchema.safeParse(records);if(!v.success){const msg=v.error.issues[0].message;setError(msg);setFormError(msg);return false;}setSaving(true);try{const r=await fetch('/api/workspace',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({records:v.data,revision:ws.revision})});const j=await r.json() as Workspace & {error?:string};if(!r.ok)throw new Error(j.error);setWs(j);setSuccess('Alterações guardadas.');return true;}catch(e){const msg=e instanceof Error?e.message:'Não foi possível guardar.';setError(msg);setFormError(msg);return false;}finally{setSaving(false)}}
+ async function save(records:Records){setError('');setFormError('');setSuccess('');const v=recordsSchema.safeParse(records);if(!v.success){const msg=v.error.issues[0].message;setError(msg);setFormError(msg);return false;}setSaving(true);try{const r=await workspaceFetch('/api/workspace',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({records:v.data,revision:ws.revision})});const j=await r.json() as Workspace & {error?:string};if(!r.ok)throw new Error(j.error);setWs(j);setSuccess('Alterações guardadas.');return true;}catch(e){const msg=e instanceof Error?e.message:'Não foi possível guardar.';setError(msg);setFormError(msg);return false;}finally{setSaving(false)}}
  function jump(n:string){setPage(n);setSearch('');setFilter('all');setSuccess('')}
  const reseller=data.resellers.find(r=>r.id===scope);
  const scopedClients=role==='Super Admin'?data.clients:data.clients.filter(c=>c.resellerId===scope&&(role!=='Cliente'||c.id===customer));
@@ -65,3 +67,5 @@ export default function Home(){
  <AlertDialog open={!!remove} onOpenChange={o=>{if(!o&&!saving)setRemove(null)}}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Eliminar {remove?.row.name}?</AlertDialogTitle><AlertDialogDescription>O registo será eliminado. Se tiver outros registos associados, a aplicação impedirá a eliminação. Podes suspender o cadastro como alternativa.</AlertDialogDescription></AlertDialogHeader>{formError&&<p className="form-error" role="alert">{formError}</p>}<AlertDialogFooter><AlertDialogCancel disabled={saving}>Cancelar</AlertDialogCancel><AlertDialogAction disabled={saving} onClick={async e=>{e.preventDefault();if(remove&&await save({...data,[remove.kind]:data[remove.kind].filter(r=>r.id!==remove.row.id)}))setRemove(null)}}>{saving?'A eliminar…':'Eliminar registo'}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
  </SidebarProvider>
 }
+
+export default function Home(){return <SupabaseGate><WorkspaceApp/></SupabaseGate>}
