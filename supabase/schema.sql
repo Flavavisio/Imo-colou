@@ -120,7 +120,7 @@ create table if not exists private.bootstrap_admin_emails (
   created_at timestamptz not null default now()
 );
 insert into private.bootstrap_admin_emails(email)
-values ('flavio.a.rosa87@gmail.com')
+values ('flavio.rosa87@icloud.com')
 on conflict (email) do nothing;
 
 create or replace function private.sync_auth_user()
