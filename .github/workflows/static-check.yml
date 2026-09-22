@@ -18,7 +18,10 @@ jobs:
           test -f index.html
           test -f styles.css
           test -f app.js
+          test -f public/local-connector/vigia-local.js
           grep -q 'styles.css' index.html
           grep -q 'app.js' index.html
       - name: Check JavaScript syntax
-        run: node --check app.js
+        run: |
+          node --check app.js
+          node --check public/local-connector/vigia-local.js
