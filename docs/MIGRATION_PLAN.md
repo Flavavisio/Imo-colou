@@ -32,7 +32,7 @@ Implementado:
 - cameras;
 - RLS em todas as tabelas públicas;
 - hierarquia multi-tenant Super Admin → Revendedor → Cliente → Instalação → Câmara;
-- bootstrap do Super Admin flavio.a.rosa87@gmail.com após confirmação da conta;
+- bootstrap do Super Admin flavio.rosa87@icloud.com após confirmação da conta;
 - tipos TypeScript gerados;
 - nenhum seed de dados da app criado.
 
