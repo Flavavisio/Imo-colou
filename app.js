@@ -111,7 +111,7 @@ function navForAccess(){
 function allowedPageNames(){return new Set(navForAccess().map(([name])=>name))}
 function navButton(name){
  const iconText=NAV_MAP[name]||'•';
- return '<button class="nav-btn '+(S.page===name?'active':'')+'" data-page="'+esc(name)+'"><span>'+esc(iconText)+'</span><span>'+esc(name)+'</span></button>';
+ return '<button type="button" class="nav-btn '+(S.page===name?'active':'')+'" data-page="'+esc(name)+'"><span>'+esc(iconText)+'</span><span>'+esc(name)+'</span></button>';
 }
 function navSections(){
  let groups=S.access?.type==='platform'?PLATFORM_NAV_GROUPS:S.access?.type==='reseller'?RESELLER_NAV_GROUPS:CLIENT_NAV_GROUPS;
@@ -589,8 +589,22 @@ function go(p){if(!allowedPageNames().has(p)){toast('Este menu não está dispon
 function render(){
  applyBrandTheme();
  document.getElementById('app').innerHTML='<div class="shell">'+sidebar()+'<section class="main">'+topbar()+'<main id="content" class="workspace"></main></section></div>';renderMain();
- $$('.nav-btn').forEach(b=>b.onclick=()=>go(b.dataset.page));$('#menu').onclick=()=>{$('.sidebar').classList.toggle('open')};$('#reload').onclick=async()=>{try{await load();toast('Dados atualizados.','success');render()}catch(e){toast(e.message,'error')}};$('#logout').onclick=async()=>{try{await fetch(C.url+'/auth/v1/logout',{method:'POST',headers:{apikey:C.key,Authorization:'Bearer '+S.session.access_token}})}catch{}clearSession();renderAuth()};
+ $('#menu').onclick=()=>{$('.sidebar').classList.toggle('open')};$('#reload').onclick=async()=>{try{await load();toast('Dados atualizados.','success');render()}catch(e){toast(e.message,'error')}};$('#logout').onclick=async()=>{try{await fetch(C.url+'/auth/v1/logout',{method:'POST',headers:{apikey:C.key,Authorization:'Bearer '+S.session.access_token}})}catch{}clearSession();renderAuth()};
 }
-async function boot(){document.getElementById('app').innerHTML='<div class="loading"><div><div class="spinner"></div><p>A abrir o Vigia Cloud…</p></div></div>';if(!await session()){renderAuth();return}try{await resolveAccess();await load();render()}catch(e){clearSession();renderAuth();setTimeout(()=>{const m=$('#authmsg');if(m){m.className='auth-status error';m.textContent=e.message}},0)}}
+let globalNavigationBound=false;
+function bindGlobalNavigation(){
+ if(globalNavigationBound)return;
+ globalNavigationBound=true;
+ document.addEventListener('click',e=>{
+  const el=e.target instanceof Element?e.target.closest('[data-page]'):null;
+  if(!el)return;
+  const page=el.getAttribute('data-page');
+  if(!page)return;
+  e.preventDefault();
+  e.stopPropagation();
+  go(page);
+ });
+}
+async function boot(){bindGlobalNavigation();document.getElementById('app').innerHTML='<div class="loading"><div><div class="spinner"></div><p>A abrir o Vigia Cloud…</p></div></div>';if(!await session()){renderAuth();return}try{await resolveAccess();await load();render()}catch(e){clearSession();renderAuth();setTimeout(()=>{const m=$('#authmsg');if(m){m.className='auth-status error';m.textContent=e.message}},0)}}
 boot();
 })();
