@@ -233,7 +233,28 @@ async function save(records,msg='Alterações guardadas.'){
  }catch(e){toast(e instanceof Error?e.message:'Não foi possível guardar.','error');throw e}
 }
 
-function logo(){return '<span class="brand-mark">'+icon('shield')+'</span><div class="brand-copy"><strong>vigia<span>cloud</span></strong><small>VIDEOVIGILÂNCIA POR EVENTOS</small></div>'}
+function activeBrand(){
+ if(!S.access||S.access.type==='platform')return {name:'vigia',suffix:'cloud',color:'#2563eb',logoUrl:''};
+ const r=S.ws.records.resellers.find(x=>x.id===S.access.resellerId);
+ if(!r)return {name:'vigia',suffix:'cloud',color:'#2563eb',logoUrl:''};
+ return {name:r.brand||r.name||'Vigia Cloud',suffix:'',color:r.color||'#2563eb',logoUrl:r.logoUrl||''};
+}
+function darker(hex){
+ const m=/^#([0-9a-f]{6})$/i.exec(String(hex||''));if(!m)return '#1d4ed8';
+ const n=parseInt(m[1],16),r=Math.max(0,((n>>16)&255)-28),g=Math.max(0,((n>>8)&255)-28),b=Math.max(0,(n&255)-28);
+ return '#'+[r,g,b].map(x=>x.toString(16).padStart(2,'0')).join('');
+}
+function applyBrandTheme(){
+ const b=activeBrand(),root=document.documentElement;
+ root.style.setProperty('--primary',b.color);root.style.setProperty('--primary2',darker(b.color));
+ document.title=(S.access&&S.access.type!=='platform'?b.name:'Vigia Cloud')+' — Videovigilância por eventos';
+}
+function logo(){
+ const b=activeBrand();
+ const mark=b.logoUrl?'<span class="brand-mark brand-mark-logo"><img src="'+esc(b.logoUrl)+'" alt=""></span>':'<span class="brand-mark">'+icon('shield')+'</span>';
+ const copy=b.suffix?'<strong>'+esc(b.name)+'<span>'+esc(b.suffix)+'</span></strong>':'<strong>'+esc(b.name)+'</strong>';
+ return mark+'<div class="brand-copy">'+copy+'<small>VIDEOVIGILÂNCIA POR EVENTOS</small></div>';
+}
 function badge(status){return '<span class="badge '+(status==='active'?'green':'amber')+'">'+(status==='active'?'Ativo':'Suspenso')+'</span>'}
 function heading(title,sub,actions=''){return '<div class="heading"><div><p class="eyebrow">'+esc(accessLabel())+'</p><h1>'+esc(title)+'</h1><p>'+esc(sub)+'</p></div><div class="heading-actions">'+actions+'</div></div>'}
 
@@ -243,7 +264,7 @@ function renderAuth(){
  $('#recover').onclick=async()=>{const m=$('#authmsg');try{await auth('/recover',{method:'POST',body:JSON.stringify({email:$('#email').value.trim()})});m.className='auth-status ok';m.textContent='Email de recuperação enviado.'}catch(x){m.className='auth-status error';m.textContent=x.message}};
 }
 function sidebar(){return '<aside class="sidebar '+(S.side?'open':'')+'"><div class="brand">'+logo()+'</div><div class="nav-label">'+esc(S.access?.type==='platform'?'PLATAFORMA':S.access?.type==='reseller'?'PORTAL REVENDEDOR':'PORTAL CLIENTE')+'</div><nav class="nav">'+navForAccess().map(([n,i])=>'<button class="nav-btn '+(S.page===n?'active':'')+'" data-page="'+esc(n)+'"><span>'+esc(i)+'</span><span>'+esc(n)+'</span></button>').join('')+'</nav><div class="sidebar-foot"><div class="user"><span class="avatar">'+esc((S.user?.email||'V')[0].toUpperCase())+'</span><div><strong>'+esc(S.user?.email||'')+'</strong><small>'+esc(accessLabel())+'</small></div></div><button class="logout" id="logout">Terminar sessão</button></div></aside>'}
-function topbar(){return '<header class="topbar"><div class="crumbs"><button id="menu" class="icon-btn mobile-menu">'+icon('menu')+'</button><span>Vigia Cloud</span><span>/</span><strong>'+esc(S.page)+'</strong></div><div class="top-actions"><span class="sync">Supabase ligado</span><button id="reload" class="btn btn-ghost">'+icon('refresh')+'<span>Atualizar</span></button></div></header>'}
+function topbar(){const brand=S.access?.type==='platform'?'Vigia Cloud':activeBrand().name;return '<header class="topbar"><div class="crumbs"><button id="menu" class="icon-btn mobile-menu">'+icon('menu')+'</button><span>'+esc(brand)+'</span><span>/</span><strong>'+esc(S.page)+'</strong></div><div class="top-actions"><span class="sync">Supabase ligado</span><button id="reload" class="btn btn-ghost">'+icon('refresh')+'<span>Atualizar</span></button></div></header>'}
 
 function overview(){
  const d=S.ws.records,alerts=makeAlerts(d),platform=S.access?.type==='platform';
@@ -353,13 +374,61 @@ function bindPage(k){
  if(k){$('#search')?.addEventListener('input',e=>{S.search=e.target.value;renderMain()});$('#filter')?.addEventListener('change',e=>{S.filter=e.target.value;renderMain()});$('#add')?.addEventListener('click',()=>editor(k));$('#emptyadd')?.addEventListener('click',()=>editor(k));$$('.edit').forEach(b=>b.onclick=()=>editor(k,b.dataset.id));$$('.del').forEach(b=>b.onclick=()=>remove(k,b.dataset.id))}
  $('#export')?.addEventListener('click',exportData);$('#import')?.addEventListener('click',importData);$$('.price-edit,.lic-edit').forEach(b=>b.onclick=()=>editor('resellers',b.dataset.id));$('.jump').forEach(b=>b.onclick=()=>go(b.dataset.page));bindBrand();bindCalc();bindUsers();
 }
-function bindBrand(){const s=$('#brand-reseller');if(!s)return;s.onchange=()=>{const r=S.ws.records.resellers.find(x=>x.id===s.value),f=$('#brand-form'),p=$('#brand-preview');if(!r){f.innerHTML='';p.innerHTML='<div class="empty"><p>Seleciona um revendedor.</p></div>';return}let logoData=r.logoData||'';f.innerHTML='<div class="field"><label>Nome comercial</label><input id="bn" class="input" value="'+esc(r.brand||r.name)+'"></div><div class="field"><label>Cor</label><input id="bc" class="input" type="color" value="'+esc(r.color||'#2563eb')+'"></div><div class="field"><label>Email suporte</label><input id="bs" class="input" type="email" value="'+esc(r.support||'')+'"></div><div class="field"><label>Logótipo</label><input id="bl" class="input" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml"><span class="sub">Máximo 180 KB.</span></div><button id="brand-save" class="btn btn-primary">Guardar identidade</button>';const preview=()=>{p.innerHTML='<div class="brand-preview-head" style="background:'+$('#bc').value+'">'+(logoData?'<img src="'+logoData+'" style="width:46px;height:46px;object-fit:contain;background:#fff;border-radius:9px;padding:4px">':'<span class="brand-mark">'+icon('shield')+'</span>')+'<strong>'+esc($('#bn').value||r.name)+'</strong></div><div class="brand-preview-body"><h2>Portal do cliente</h2><p class="sub">A mesma aplicação com a identidade do revendedor.</p><div class="camera-placeholder">'+icon('camera')+'<span>Área de câmaras</span></div></div>'};preview();$('#bn').oninput=preview;$('#bc').oninput=preview;$('#bl').onchange=e=>{const file=e.target.files[0];if(!file)return;if(file.size>180000){toast('Logótipo demasiado grande.','error');return}const fr=new FileReader();fr.onload=()=>{logoData=fr.result;preview()};fr.readAsDataURL(file)};$('#brand-save').onclick=async()=>{const n=structuredClone(S.ws.records),x=n.resellers.find(x=>x.id===r.id);x.brand=$('#bn').value.trim()||x.name;x.color=$('#bc').value;x.support=$('#bs').value.trim();x.logoData=logoData;try{await save(n,'Identidade atualizada.')}catch(e){toast(e.message,'error')}}}}
+async function uploadBrandLogo(resellerId,file){
+ if(!file)return '';
+ if(file.size>524288)throw Error('O logótipo deve ter no máximo 512 KB.');
+ if(!['image/png','image/jpeg','image/webp'].includes(file.type))throw Error('Usa PNG, JPG ou WebP.');
+ if(!S.session)throw Error('Sessão terminada.');
+ const path=encodeURIComponent(resellerId)+'/logo';
+ let headers={apikey:C.key,Authorization:'Bearer '+S.session.access_token,'Content-Type':file.type,'x-upsert':'true','cache-control':'3600'};
+ let r=await fetch(C.url+'/storage/v1/object/branding/'+path,{method:'POST',headers,body:file});
+ if(r.status===401){
+  await refresh();
+  headers.Authorization='Bearer '+S.session.access_token;
+  r=await fetch(C.url+'/storage/v1/object/branding/'+path,{method:'POST',headers,body:file});
+ }
+ const j=await r.json().catch(()=>({}));
+ if(!r.ok)throw Error(j.message||j.error||'Não foi possível carregar o logótipo.');
+ return C.url+'/storage/v1/object/public/branding/'+path+'?v='+Date.now();
+}
+function bindBrand(){
+ const s=$('#brand-reseller');if(!s)return;
+ s.onchange=()=>{
+  const r=S.ws.records.resellers.find(x=>x.id===s.value),f=$('#brand-form'),p=$('#brand-preview');
+  if(!r){f.innerHTML='';p.innerHTML='<div class="empty"><p>Seleciona um revendedor.</p></div>';return}
+  let selectedFile=null,previewUrl=r.logoUrl||'';
+  f.innerHTML='<div class="field"><label>Nome comercial</label><input id="bn" class="input" value="'+esc(r.brand||r.name)+'"></div><div class="field"><label>Cor</label><input id="bc" class="input" type="color" value="'+esc(r.color||'#2563eb')+'"></div><div class="field"><label>Email suporte</label><input id="bs" class="input" type="email" value="'+esc(r.support||'')+'"></div><div class="field"><label>Logótipo</label><input id="bl" class="input" type="file" accept="image/png,image/jpeg,image/webp"><span class="sub">PNG, JPG ou WebP · máximo 512 KB.</span></div><button id="brand-save" class="btn btn-primary">Guardar identidade</button>';
+  const preview=()=>{p.innerHTML='<div class="brand-preview-head" style="background:'+$('#bc').value+'">'+(previewUrl?'<img src="'+esc(previewUrl)+'" style="width:46px;height:46px;object-fit:contain;background:#fff;border-radius:9px;padding:4px">':'<span class="brand-mark">'+icon('shield')+'</span>')+'<strong>'+esc($('#bn').value||r.name)+'</strong></div><div class="brand-preview-body"><h2>Portal do cliente</h2><p class="sub">A mesma aplicação com a identidade do revendedor.</p><div class="camera-placeholder">'+icon('camera')+'<span>Área de câmaras</span></div></div>'};
+  preview();$('#bn').oninput=preview;$('#bc').oninput=preview;
+  $('#bl').onchange=e=>{
+   const file=e.target.files[0];if(!file)return;
+   if(file.size>524288){toast('Logótipo demasiado grande.','error');e.target.value='';return}
+   if(!['image/png','image/jpeg','image/webp'].includes(file.type)){toast('Usa PNG, JPG ou WebP.','error');e.target.value='';return}
+   selectedFile=file;
+   if(previewUrl.startsWith('blob:'))URL.revokeObjectURL(previewUrl);
+   previewUrl=URL.createObjectURL(file);preview();
+  };
+  $('#brand-save').onclick=async()=>{
+   const btn=$('#brand-save');btn.disabled=true;btn.textContent='A guardar…';
+   try{
+    let logoUrl=r.logoUrl||'';
+    if(selectedFile)logoUrl=await uploadBrandLogo(r.id,selectedFile);
+    const records=structuredClone(S.ws.records),x=records.resellers.find(x=>x.id===r.id);
+    x.brand=$('#bn').value.trim()||x.name;x.color=$('#bc').value;x.support=$('#bs').value.trim();x.logoUrl=logoUrl;
+    await save(records,'Identidade atualizada.');
+   }catch(e){toast(e.message,'error')}finally{btn.disabled=false;btn.textContent='Guardar identidade'}
+  };
+ };
+ if(S.access?.type==='reseller'&&S.access.resellerId){s.value=S.access.resellerId;s.disabled=true;s.onchange()}
+}
+
 function bindCalc(){if(!$('#ca'))return;const f=()=>{const gb=Number($('#ca').value)*Number($('#ev').value)*Number($('#se').value)*Number($('#da').value)*Number($('#bi').value)/8000;$('#est').textContent=gb>=1000?(gb/1000).toFixed(2)+' TB':gb.toFixed(1)+' GB'};$$('.c').forEach(x=>x.oninput=f);f()}
 function exportData(){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify({format:'vigia-cloud-html-v1',exportedAt:new Date().toISOString(),...S.ws},null,2)],{type:'application/json'}));a.download='vigia-cloud-dados.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),700)}
 function importData(){const i=document.createElement('input');i.type='file';i.accept='.json,application/json';i.onchange=()=>{const f=i.files[0];if(!f)return;const r=new FileReader();r.onload=async()=>{try{const j=JSON.parse(r.result),records=j.records||j;validate(records);if(!confirm('Substituir o workspace atual por estes dados?'))return;await save(records,'Dados importados.')}catch(e){toast(e.message,'error')}};r.readAsText(f)};i.click()}
 
 function go(p){S.page=p;S.search='';S.filter='all';S.side=false;render();scrollTo({top:0,behavior:'smooth'})}
 function render(){
+ applyBrandTheme();
  document.getElementById('app').innerHTML='<div class="shell">'+sidebar()+'<section class="main">'+topbar()+'<main id="content" class="workspace"></main></section></div>';renderMain();
  $$('.nav-btn').forEach(b=>b.onclick=()=>go(b.dataset.page));$('#menu').onclick=()=>{$('.sidebar').classList.toggle('open')};$('#reload').onclick=async()=>{try{await load();toast('Dados atualizados.','success');render()}catch(e){toast(e.message,'error')}};$('#logout').onclick=async()=>{try{await fetch(C.url+'/auth/v1/logout',{method:'POST',headers:{apikey:C.key,Authorization:'Bearer '+S.session.access_token}})}catch{}clearSession();renderAuth()};
 }
