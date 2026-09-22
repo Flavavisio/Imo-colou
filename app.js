@@ -315,17 +315,54 @@ async function remove(k,rid){const d=S.ws.records,r=d[k].find(x=>x.id===rid);if(
 function license(r){if(r.status==='paused')return ['Suspenso','amber'];if(r.validUntil&&r.validUntil<nowDate())return ['Expirado','red'];const days=r.validUntil?Math.round((Date.parse(r.validUntil)-Date.parse(nowDate()))/86400000):null;if(days!==null&&days<=5)return [days===0?'Expira hoje':'Expira em '+days+' dias','amber'];return [r.licenseMode==='trial'?'Trial':'Ativo',r.licenseMode==='trial'?'blue':'green']}
 function resellerCams(d,rid){const cs=new Set(d.clients.filter(c=>c.resellerId===rid).map(c=>c.id)),ls=new Set(d.locations.filter(l=>cs.has(l.clientId)).map(l=>l.id));return d.cameras.filter(c=>ls.has(c.locationId))}
 function commercial(d,r){const cams=resellerCams(d,r.id),limit=r.licenseMode==='trial'?Number(r.trialCameraLimit||2):(r.walletLimit??d.plans.find(p=>p.id===r.planId)?.cameraLimit??null),base=Number(d.plans.find(p=>p.id===r.planId)?.price||0);let cost=base,revenue=0,missing=0;cams.filter(c=>c.status==='active').forEach(c=>{const p=d.cameraPlans.find(p=>p.id===c.cameraPlanId),sale=c.salePrice??r.salePrices?.[c.cameraPlanId];if(!p||sale==null)missing++;cost+=Number(p?.price||0);revenue+=Number(sale||0)});const profit=revenue-cost;return {cams,limit,cost,revenue,profit,margin:revenue?profit/revenue*100:null,missing}}
-function makeAlerts(d){const a=[];d.resellers.forEach(r=>{const add=(level,title,detail,target)=>a.push({level,title,detail,target,name:r.name});if(r.status==='paused'){add('info','Cadastro suspenso','Revê a licença antes de reativar.','Licenças');return}if(!r.validUntil)add('info','Validade por definir','A licença não tem data de fim.','Licenças');else{const days=Math.round((Date.parse(r.validUntil)-Date.parse(nowDate()))/86400000);if(days<0)add('urgent','Licença expirada','Terminou em '+r.validUntil+'.','Licenças');else if(days<=5)add('warning',days===0?'Expira hoje':'Expira em '+days+' dias','Prepara a renovação.','Licenças')}const m=commercial(d,r);if(m.limit===null)add('info','Carteira sem limite','Define capacidade ou plano.','Carteiras e preços');else if(m.cams.length>=m.limit)add('warning','Carteira completa',m.cams.length+' de '+m.limit+' câmaras.','Carteiras e preços');else if(m.cams.length/m.limit>=.8)add('warning','Carteira acima de 80%',m.limit-m.cams.length+' câmaras disponíveis.','Carteiras e preços');if(m.missing)add('warning','Previsão incompleta',m.missing+' câmaras sem plano/preço.','Carteiras e preços');else if(m.profit<0)add('warning','Margem negativa','A venda prevista não cobre o custo.','Carteiras e preços')});return a}
+function makeAlerts(d){
+ const a=[];
+ d.resellers.forEach(r=>{
+  const add=(level,title,detail,target)=>a.push({level,title,detail,target,name:r.name});
+  if(r.status==='paused')add('info','Cadastro suspenso','Revê a licença antes de reativar.','Licenças');
+  else if(!r.validUntil)add('info','Validade por definir','A licença não tem data de fim.','Licenças');
+  else{
+   const days=Math.round((Date.parse(r.validUntil)-Date.parse(nowDate()))/86400000);
+   if(days<0)add('urgent','Licença expirada','Terminou em '+r.validUntil+'.','Licenças');
+   else if(days<=5)add('warning',days===0?'Expira hoje':'Expira em '+days+' dias','Prepara a renovação.','Licenças');
+  }
+  const m=commercial(d,r);
+  if(m.limit===null)add('info','Carteira sem limite','Define capacidade ou plano.','Carteiras e preços');
+  else if(m.cams.length>=m.limit)add('warning','Carteira completa',m.cams.length+' de '+m.limit+' câmaras.','Carteiras e preços');
+  else if(m.cams.length/m.limit>=.8)add('warning','Carteira acima de 80%',m.limit-m.cams.length+' câmaras disponíveis.','Carteiras e preços');
+  if(m.missing)add('warning','Previsão incompleta',m.missing+' câmaras sem plano/preço.','Carteiras e preços');
+  else if(m.profit<0)add('warning','Margem negativa','A venda prevista não cobre o custo.','Carteiras e preços');
+  const clientIds=new Set(d.clients.filter(x=>x.resellerId===r.id).map(x=>x.id));
+  const locIds=new Set(d.locations.filter(x=>clientIds.has(x.clientId)).map(x=>x.id));
+  const offline=d.cameras.filter(x=>locIds.has(x.locationId)&&x.onlineStatus==='offline');
+  if(offline.length)add('warning','Câmaras offline',offline.length+' equipamento'+(offline.length===1?'':'s')+' reportado'+(offline.length===1?'':'s')+' offline.','Câmaras');
+ });
+ return a;
+}
 
 function prices(){const d=S.ws.records;return heading('Carteiras e preços','Capacidade, custos, venda e margem prevista.')+'<div class="pricing">'+(d.resellers.length?d.resellers.map(r=>{const m=commercial(d,r),st=license(r),pct=m.limit?Math.min(100,m.cams.length/m.limit*100):0;return '<article class="price-card"><div style="display:flex;justify-content:space-between;gap:8px"><div><h3>'+esc(r.name)+'</h3><span class="sub">'+esc(d.plans.find(p=>p.id===r.planId)?.name||'Sem plano')+'</span></div><span class="badge '+st[1]+'">'+st[0]+'</span></div><div style="margin-top:18px"><span class="sub">Carteira</span><span class="money">'+m.cams.length+(m.limit?' / '+m.limit:'')+'</span><div class="progress"><span style="width:'+pct+'%"></span></div></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:18px"><div><span class="sub">Custo</span><strong>'+euro(m.cost)+'</strong></div><div><span class="sub">Venda</span><strong>'+euro(m.revenue)+'</strong></div><div><span class="sub">Resultado</span><strong style="color:'+(m.profit<0?'var(--danger)':'var(--success)')+'">'+euro(m.profit)+'</strong></div><div><span class="sub">Margem</span><strong>'+(m.margin==null?'—':m.margin.toFixed(1)+'%')+'</strong></div></div><button class="btn btn-ghost price-edit" data-id="'+r.id+'" style="margin-top:16px">Editar revendedor</button></article>'}).join(''):'<section class="card"><div class="empty"><p>Cria revendedores e planos para veres a previsão comercial.</p></div></section>')+'</div>'}
 function licenses(){const d=S.ws.records;return heading('Licenças','Trials, contratos, validade e capacidade.')+'<section class="card">'+(d.resellers.length?'<div class="table-wrap"><table class="table"><thead><tr><th>Revendedor</th><th>Modalidade</th><th>Válido até</th><th>Carteira</th><th>Estado</th><th></th></tr></thead><tbody>'+d.resellers.map(r=>{const st=license(r),m=commercial(d,r);return '<tr><td><strong>'+esc(r.name)+'</strong></td><td>'+(r.licenseMode==='trial'?'Trial':'Contrato')+'</td><td>'+esc(r.validUntil||'Sem data')+'</td><td>'+m.cams.length+(m.limit?' / '+m.limit:'')+'</td><td><span class="badge '+st[1]+'">'+st[0]+'</span></td><td><button class="btn btn-ghost lic-edit" data-id="'+r.id+'">Editar</button></td></tr>'}).join('')+'</tbody></table></div>':'<div class="empty"><p>Sem revendedores.</p></div>')+'</section>'}
 function alerts(){const a=makeAlerts(S.ws.records);return heading('Alertas','Pontos de atenção da operação.')+'<section class="card">'+(a.length?a.map(n=>'<div class="notice-row"><span class="notice-dot '+n.level+'"></span><div class="notice-copy"><strong>'+esc(n.name)+' · '+esc(n.title)+'</strong><span>'+esc(n.detail)+'</span></div><button class="btn btn-ghost jump" data-page="'+n.target+'">Abrir</button></div>').join(''):'<div class="empty"><h3>Sem alertas</h3><p>A operação não tem avisos pendentes.</p></div>')+'</section>'}
+function cameraResellerId(camera,d=S.ws.records){
+ const loc=d.locations.find(x=>x.id===camera.locationId),client=d.clients.find(x=>x.id===loc?.clientId);
+ return client?.resellerId||'';
+}
+function currentImouReseller(){
+ if(S.access?.type==='reseller'||S.access?.type==='client')return S.access.resellerId||'';
+ if(!S.imou.resellerId&&S.ws.records.resellers.length)S.imou.resellerId=S.ws.records.resellers[0].id;
+ return S.imou.resellerId||'';
+}
 function connections(){
- const d=S.ws.records,can=canMutate('cameras'),im=S.imou,result=im.result;
+ const d=S.ws.records,can=canMutate('cameras'),manageCallback=S.access?.type==='platform'||(S.access?.type==='reseller'&&['owner','admin'].includes(S.access.role));
+ const im=S.imou,rid=currentImouReseller(),result=im.result;
  const devices=result?.devices||[],device=devices.find(x=>x.id===im.selected);
- const cameras=d.cameras.filter(x=>x.connectionMode==='imou');
+ const cameras=d.cameras.filter(x=>x.connectionMode==='imou'&&(!rid||cameraResellerId(x,d)===rid));
  const target=cameras.find(x=>x.id===im.target);
  const status=result?'<span class="badge green">Consulta concluída</span>':'<span class="badge amber">Ligação por validar</span>';
+ const callbackBadge=im.callbackConfigured===true?'<span class="badge green">Eventos ativos</span>':im.callbackConfigured===false?'<span class="badge amber">Eventos inativos</span>':'<span class="badge">A verificar…</span>';
+ const resellerPicker=S.access?.type==='platform'
+  ? '<div class="field"><label>Revendedor</label><select id="imou-reseller" class="select"><option value="">Selecionar</option>'+d.resellers.map(r=>'<option value="'+r.id+'" '+(r.id===rid?'selected':'')+'>'+esc(r.name)+'</option>').join('')+'</select></div>'
+  : '<div class="field"><label>Revendedor</label><div><strong>'+esc(d.resellers.find(r=>r.id===rid)?.name||'—')+'</strong><span class="sub">Âmbito da conta atual</span></div></div>';
  const deviceArea=!result?'':(
   '<div class="card" style="margin-top:20px"><div class="card-head"><div><h2>Equipamentos Imou · página '+esc(result.page)+'</h2><p>Consulta: '+esc(dt(result.checkedAt))+'</p></div><div class="heading-actions"><button id="imou-prev" class="btn btn-ghost" '+(result.page<=1?'disabled':'')+'>Anterior</button><button id="imou-next" class="btn btn-ghost" '+(!result.hasMore?'disabled':'')+'>Seguinte</button></div></div>'+
   (devices.length?'<div style="padding:21px"><div class="form-grid"><div class="field"><label>Equipamento</label><select id="imou-device" class="select"><option value="">Selecionar</option>'+devices.map(x=>'<option value="'+esc(x.id)+'" '+(x.id===im.selected?'selected':'')+'>'+esc(x.name)+' · '+esc(x.id)+'</option>').join('')+'</select></div>'+
@@ -335,26 +372,41 @@ function connections(){
   '</div>'
  );
  return heading('Ligações','Imou Cloud e rede local sem guardar credenciais sensíveis.')+
- '<div class="connection-grid"><article class="connection-card"><span class="metric-icon">'+icon('cloud')+'</span><h3>Imou Cloud</h3><p>A consulta é feita por uma Edge Function Supabase. App Secret e token não são persistidos.</p>'+status+'</article><article class="connection-card"><span class="metric-icon">'+icon('camera')+'</span><h3>Rede local / RTSP</h3><p>O cadastro guarda apenas IP, porta e path. Utilizador/password ficam no diagnóstico local.</p><span class="badge green">Modelo preparado</span></article><article class="connection-card"><span class="metric-icon">'+icon('shield')+'</span><h3>Segurança</h3><p>JWT + RLS + Edge Function. Só Super Admin e Revendedor owner/admin/operator podem consultar.</p><span class="badge blue">Backend ativo</span></article></div>'+
+ '<div class="connection-grid"><article class="connection-card"><span class="metric-icon">'+icon('cloud')+'</span><h3>Imou Cloud</h3><p>Consulta e associação através de Edge Functions Supabase.</p>'+status+'</article><article class="connection-card"><span class="metric-icon">'+icon('camera')+'</span><h3>Eventos Imou</h3><p>Callback público protegido por token opaco por revendedor.</p>'+callbackBadge+'</article><article class="connection-card"><span class="metric-icon">'+icon('shield')+'</span><h3>Rede local / RTSP</h3><p>Utilizador/password ficam apenas no diagnóstico local.</p><span class="badge blue">Sem credenciais na cloud</span></article></div>'+
  '<section class="card" style="margin-top:20px"><div class="card-head"><div><h2>Imou · conta e equipamentos</h2><p>Credenciais apenas em memória enquanto permaneces nesta área.</p></div></div>'+
- (can?'<div style="padding:21px"><div class="form-grid"><div class="field"><label>App ID</label><input id="imou-app" class="input" autocomplete="off" maxlength="200" value="'+esc(im.appId)+'"></div><div class="field"><label>App Secret</label><input id="imou-secret" class="input" type="password" autocomplete="new-password" maxlength="300" value="'+esc(im.secret)+'"></div><div class="field"><label>Região</label><select id="imou-region" class="select"><option value="eu" '+(im.region==='eu'?'selected':'')+'>Europa · Frankfurt</option><option value="us" '+(im.region==='us'?'selected':'')+'>América · Oregon</option><option value="sg" '+(im.region==='sg'?'selected':'')+'>Ásia · Singapura</option></select></div><div class="field" style="align-self:end"><button id="imou-consult" class="btn btn-primary">Consultar equipamentos</button></div></div><div style="display:flex;gap:10px;align-items:center;margin-top:15px;flex-wrap:wrap"><button id="imou-clear" class="btn btn-ghost">Limpar credenciais</button><span class="sub">Não são guardadas em localStorage, base de dados ou GitHub.</span></div></div>':'<div class="empty"><p>O teu perfil tem acesso de consulta, mas não pode usar credenciais Imou nem alterar associações.</p></div>')+
+ (can?'<div style="padding:21px"><div class="form-grid">'+resellerPicker+'<div class="field"><label>Região</label><select id="imou-region" class="select"><option value="eu" '+(im.region==='eu'?'selected':'')+'>Europa · Frankfurt</option><option value="us" '+(im.region==='us'?'selected':'')+'>América · Oregon</option><option value="sg" '+(im.region==='sg'?'selected':'')+'>Ásia · Singapura</option></select></div><div class="field"><label>App ID</label><input id="imou-app" class="input" autocomplete="off" maxlength="200" value="'+esc(im.appId)+'"></div><div class="field"><label>App Secret</label><input id="imou-secret" class="input" type="password" autocomplete="new-password" maxlength="300" value="'+esc(im.secret)+'"></div></div><div style="display:flex;gap:10px;align-items:center;margin-top:15px;flex-wrap:wrap"><button id="imou-consult" class="btn btn-primary">Consultar equipamentos</button><button id="imou-clear" class="btn btn-ghost">Limpar credenciais</button>'+(manageCallback?'<button id="imou-events-on" class="btn btn-ghost">Ativar eventos</button><button id="imou-events-off" class="btn btn-ghost" '+(im.callbackConfigured!==true?'disabled':'')+'>Desativar eventos</button>':'')+'<span class="sub">App Secret e token não são persistidos.</span></div></div>':'<div class="empty"><p>O teu perfil não pode usar credenciais Imou nem alterar associações.</p></div>')+
  '</section>'+deviceArea+
- '<section class="card" style="margin-top:20px"><div class="card-head"><div><h2>Estado da integração</h2></div></div><div class="notice-row"><span class="notice-dot info"></span><div class="notice-copy"><strong>Câmaras Imou associadas</strong><span>'+cameras.filter(x=>x.imouDeviceId).length+' / '+cameras.length+'</span></div></div><div class="notice-row"><span class="notice-dot warning"></span><div class="notice-copy"><strong>Eventos automáticos</strong><span>Próxima fase</span></div></div><div class="notice-row"><span class="notice-dot warning"></span><div class="notice-copy"><strong>Clips e gravação cloud</strong><span>Próxima fase</span></div></div></section>';
+ '<section class="card" style="margin-top:20px"><div class="card-head"><div><h2>Estado da integração</h2></div></div><div class="notice-row"><span class="notice-dot info"></span><div class="notice-copy"><strong>Câmaras Imou associadas</strong><span>'+cameras.filter(x=>x.imouDeviceId).length+' / '+cameras.length+'</span></div></div><div class="notice-row"><span class="notice-dot '+(im.callbackConfigured?'info':'warning')+'"></span><div class="notice-copy"><strong>Eventos automáticos</strong><span id="imou-callback-state">'+(im.callbackConfigured===true?'Callback ativo':im.callbackConfigured===false?'Por ativar':'A verificar configuração…')+'</span></div></div><div class="notice-row"><span class="notice-dot warning"></span><div class="notice-copy"><strong>Clips e gravação cloud</strong><span>Por integrar</span></div></div></section>';
 }
 async function consultImou(page=1){
  const im=S.imou;
+ if(!currentImouReseller())throw Error('Seleciona um revendedor.');
  if(!im.appId.trim()||!im.secret)throw Error('Preenche o App ID e o App Secret.');
  const data=await invokeFunction('imou-devices',{appId:im.appId.trim(),appSecret:im.secret,region:im.region,page});
  im.page=page;im.result=data;im.selected='';im.channel='0';im.target='';
 }
+async function loadImouCallbackStatus(force=false){
+ const rid=currentImouReseller();if(!rid)return;
+ if(!force&&S.imou.callbackFor===rid&&S.imou.callbackConfigured!==null)return;
+ S.imou.callbackFor=rid;S.imou.callbackConfigured=null;
+ try{
+  const data=await invokeFunction('imou-configure-callback',{action:'status',resellerId:rid});
+  S.imou.callbackConfigured=Boolean(data.configured);
+ }catch{S.imou.callbackConfigured=false}
+ renderMain();
+}
 function bindImou(){
  const app=$('#imou-app');if(!app)return;
- const im=S.imou;
+ const im=S.imou,rid=currentImouReseller();
+ if(rid&&(im.callbackFor!==rid||im.callbackConfigured===null))void loadImouCallbackStatus();
+ $('#imou-reseller')?.addEventListener('change',e=>{im.resellerId=e.target.value;im.result=null;im.selected='';im.target='';im.callbackConfigured=null;im.callbackFor='';renderMain()});
  app.oninput=()=>{im.appId=app.value;im.result=null};
  $('#imou-secret').oninput=e=>{im.secret=e.target.value;im.result=null};
  $('#imou-region').onchange=e=>{im.region=e.target.value;im.result=null};
  $('#imou-consult').onclick=async()=>{const b=$('#imou-consult');b.disabled=true;b.textContent='A consultar…';try{await consultImou(1);toast('Consulta Imou concluída.','success');renderMain()}catch(e){toast(e.message,'error');b.disabled=false;b.textContent='Consultar equipamentos'}};
- $('#imou-clear').onclick=()=>{S.imou={appId:'',secret:'',region:im.region,page:1,result:null,selected:'',channel:'0',target:''};toast('Credenciais removidas da sessão.','success');renderMain()};
+ $('#imou-clear').onclick=()=>{S.imou={appId:'',secret:'',region:im.region,resellerId:im.resellerId,page:1,result:null,selected:'',channel:'0',target:'',callbackConfigured:im.callbackConfigured,callbackFor:im.callbackFor};toast('Credenciais removidas da sessão.','success');renderMain()};
+ $('#imou-events-on')?.addEventListener('click',async()=>{const resellerId=currentImouReseller();if(!resellerId){toast('Seleciona um revendedor.','error');return}if(!im.appId.trim()||!im.secret){toast('Preenche App ID e App Secret para ativar o callback.','error');return}const b=$('#imou-events-on');b.disabled=true;b.textContent='A ativar…';try{await invokeFunction('imou-configure-callback',{action:'enable',resellerId,appId:im.appId.trim(),appSecret:im.secret,region:im.region});im.callbackConfigured=true;im.callbackFor=resellerId;toast('Eventos Imou ativados.','success');renderMain()}catch(e){toast(e.message,'error');b.disabled=false;b.textContent='Ativar eventos'}});
+ $('#imou-events-off')?.addEventListener('click',async()=>{const resellerId=currentImouReseller();if(!im.appId.trim()||!im.secret){toast('Volta a introduzir App ID e App Secret para desativar na Imou.','error');return}const b=$('#imou-events-off');b.disabled=true;b.textContent='A desativar…';try{await invokeFunction('imou-configure-callback',{action:'disable',resellerId,appId:im.appId.trim(),appSecret:im.secret,region:im.region});im.callbackConfigured=false;toast('Eventos Imou desativados.','success');renderMain()}catch(e){toast(e.message,'error');b.disabled=false;b.textContent='Desativar eventos'}});
  $('#imou-prev')?.addEventListener('click',async()=>{try{await consultImou(Math.max(1,(im.result?.page||1)-1));renderMain()}catch(e){toast(e.message,'error')}});
  $('#imou-next')?.addEventListener('click',async()=>{try{await consultImou((im.result?.page||1)+1);renderMain()}catch(e){toast(e.message,'error')}});
  $('#imou-device')?.addEventListener('change',e=>{im.selected=e.target.value;const d=im.result?.devices?.find(x=>x.id===im.selected);im.channel=d?.channels?.[0]?.id||'0';renderMain()});
@@ -364,6 +416,7 @@ function bindImou(){
  $('#imou-associate')?.addEventListener('click',async()=>{
   const device=im.result?.devices?.find(x=>x.id===im.selected),camera=S.ws.records.cameras.find(x=>x.id===im.target);
   if(!device||!camera)return;
+  if(cameraResellerId(camera)!==currentImouReseller()){toast('A câmara não pertence ao revendedor selecionado.','error');return}
   if(!/^[A-Za-z0-9_-]{1,100}$/.test(im.channel)){toast('Canal Imou inválido.','error');return}
   if(S.ws.records.cameras.some(x=>x.id!==camera.id&&x.connectionMode==='imou'&&x.imouDeviceId===device.id&&x.imouChannelId===im.channel)){toast('Este equipamento e canal já estão associados.','error');return}
   const records=structuredClone(S.ws.records),x=records.cameras.find(x=>x.id===camera.id);
@@ -372,7 +425,13 @@ function bindImou(){
  });
 }
 
-function events(){return heading('Eventos','Biblioteca e gravação por eventos.')+'<section class="card"><div class="event-placeholder">'+icon('camera')+'<h2>Integração de eventos é a próxima fase.</h2><p>A base Supabase já tem a estrutura de eventos. Falta receber eventos Imou/local, gerar clips, thumbnails, player, download e retenção.</p></div></section>'}
+function events(){
+ const rows=S.events||[],d=S.ws.records;
+ const label={motion:'Movimento',person:'Pessoa',vehicle:'Veículo',other:'Outro'};
+ const cards=[['Eventos',rows.length],['Movimento',rows.filter(x=>x.event_type==='motion').length],['Pessoa',rows.filter(x=>x.event_type==='person').length],['Clips prontos',rows.filter(x=>x.status==='clip_ready').length]];
+ const body=rows.length?'<div class="table-wrap"><table class="table"><thead><tr><th>Data</th><th>Câmara</th><th>Instalação</th><th>Tipo</th><th>Origem</th><th>Estado</th></tr></thead><tbody>'+rows.map(e=>{const cam=d.cameras.find(x=>x.id===e.camera_id),loc=d.locations.find(x=>x.id===e.installation_id);const st=e.status==='clip_ready'?['Clip pronto','green']:e.status==='failed'?['Falhou','red']:e.status==='clip_pending'?['Clip pendente','amber']:['Evento recebido','blue'];return '<tr><td>'+esc(dt(e.occurred_at))+'</td><td><strong>'+esc(cam?.name||'Câmara')+'</strong><span class="sub">'+esc(cam?.imouDeviceId||'')+'</span></td><td>'+esc(loc?.name||'—')+'</td><td>'+esc(label[e.event_type]||e.event_type)+'</td><td>'+esc(e.provider)+'</td><td><span class="badge '+st[1]+'">'+st[0]+'</span></td></tr>'}).join('')+'</tbody></table></div>':'<div class="event-placeholder">'+icon('camera')+'<h2>A aguardar o primeiro evento.</h2><p>Quando o callback Imou estiver ativo e uma câmara associada gerar um alarme, o evento aparece aqui automaticamente.</p></div>';
+ return heading('Eventos','Biblioteca de eventos recebidos das câmaras.')+'<section class="metrics">'+cards.map(([a,b])=>'<div class="metric"><div class="metric-head"><span>'+a+'</span><span class="metric-icon">'+icon('camera')+'</span></div><strong>'+b+'</strong><small>Últimos 200 registos</small></div>').join('')+'</section><section class="card">'+body+'</section><p class="sub" style="margin-top:12px">Os clips continuam separados dos metadados. A plataforma não faz gravação contínua.</p>';
+}
 function branding(){const d=S.ws.records;return heading('Marca própria','Nome, cor, suporte e logótipo por revendedor.')+'<div class="brand-grid"><section class="card"><div class="card-head"><div><h2>Identidade</h2><p>Seleciona um revendedor.</p></div></div><div style="padding:21px"><div class="field"><label>Revendedor</label><select id="brand-reseller" class="select"><option value="">Selecionar</option>'+d.resellers.map(r=>'<option value="'+r.id+'">'+esc(r.name)+'</option>').join('')+'</select></div><div id="brand-form" style="display:grid;gap:14px;margin-top:16px"></div></div></section><section id="brand-preview" class="brand-preview"><div class="empty"><p>Seleciona um revendedor para pré-visualizar.</p></div></section></div>'}
 function storage(){return heading('Armazenamento','Estimativa de capacidade para gravação por eventos.')+'<section class="card"><div class="card-head"><div><h2>Calculadora</h2><p>Estimativa técnica.</p></div></div><div style="padding:21px"><div class="calc"><div class="field"><label>Câmaras</label><input id="ca" class="input c" type="number" value="10"></div><div class="field"><label>Eventos/dia</label><input id="ev" class="input c" type="number" value="30"></div><div class="field"><label>Segundos/evento</label><input id="se" class="input c" type="number" value="30"></div><div class="field"><label>Dias</label><input id="da" class="input c" type="number" value="30"></div><div class="field"><label>Bitrate Mbps</label><input id="bi" class="input c" type="number" step=".1" value="2"></div></div><div class="estimate"><span>Estimativa total</span><strong id="est">—</strong></div><p class="sub">Fórmula: câmaras × eventos × segundos × dias × bitrate ÷ 8.</p></div></section>'}
 
@@ -478,7 +537,7 @@ function bindCalc(){if(!$('#ca'))return;const f=()=>{const gb=Number($('#ca').va
 function exportData(){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify({format:'vigia-cloud-html-v1',exportedAt:new Date().toISOString(),...S.ws},null,2)],{type:'application/json'}));a.download='vigia-cloud-dados.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),700)}
 function importData(){const i=document.createElement('input');i.type='file';i.accept='.json,application/json';i.onchange=()=>{const f=i.files[0];if(!f)return;const r=new FileReader();r.onload=async()=>{try{const j=JSON.parse(r.result),records=j.records||j;validate(records);if(!confirm('Substituir o workspace atual por estes dados?'))return;await save(records,'Dados importados.')}catch(e){toast(e.message,'error')}};r.readAsText(f)};i.click()}
 
-function go(p){if(S.page==='Ligações'&&p!=='Ligações')S.imou={appId:'',secret:'',region:S.imou.region||'eu',page:1,result:null,selected:'',channel:'0',target:''};S.page=p;S.search='';S.filter='all';S.side=false;render();scrollTo({top:0,behavior:'smooth'})}
+function go(p){if(S.page==='Ligações'&&p!=='Ligações')S.imou={appId:'',secret:'',region:S.imou.region||'eu',resellerId:S.imou.resellerId||'',page:1,result:null,selected:'',channel:'0',target:'',callbackConfigured:null,callbackFor:''};S.page=p;S.search='';S.filter='all';S.side=false;render();scrollTo({top:0,behavior:'smooth'})}
 function render(){
  applyBrandTheme();
  document.getElementById('app').innerHTML='<div class="shell">'+sidebar()+'<section class="main">'+topbar()+'<main id="content" class="workspace"></main></section></div>';renderMain();
