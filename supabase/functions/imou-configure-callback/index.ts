@@ -125,9 +125,13 @@ Deno.serve(async(req)=>{
     if(action==="disable"){
       await call("setMessageCallback",{token:accessToken,status:"off",callbackFlag:"",callbackUrl:"",basePush:"2"});
       await admin.from("imou_callback_configs").update({active:false,updated_at:new Date().toISOString()}).eq("reseller_id",resellerId);
+      await admin.rpc("vigia_delete_imou_secret",{p_reseller_id:resellerId});
       return json({configured:false});
     }
     if(action!=="enable")return json({error:"Ação inválida."},400);
+
+    const {error:vaultError}=await admin.rpc("vigia_upsert_imou_secret",{p_reseller_id:resellerId,p_secret:appSecret});
+    if(vaultError)return json({error:"Não foi possível guardar as credenciais encriptadas para o recorder."},500);
 
     const callbackToken=randomToken();
     const callbackUrl=`${url}/functions/v1/imou-callback?token=${encodeURIComponent(callbackToken)}`;
