@@ -9,7 +9,7 @@ const C={
 };
 const EMPTY={cameraPlans:[],plans:[],resellers:[],clients:[],locations:[],cameras:[]};
 const S={session:null,user:null,access:null,ws:{records:structuredClone(EMPTY),revision:0,activity:[]},hasSnapshot:false,page:'Visão geral',search:'',filter:'all',side:false};
-const NAV=[['Visão geral','▦'],['Revendedores','▣'],['Clientes','◉'],['Instalações','⌖'],['Câmaras','◉'],['Ligações','↔'],['Planos','◇'],['Planos por câmara','◇'],['Carteiras e preços','▤'],['Licenças','□'],['Alertas','!'],['Eventos','▶'],['Marca própria','●'],['Armazenamento','▥']];
+const NAV=[['Visão geral','▦'],['Revendedores','▣'],['Clientes','◉'],['Utilizadores','◎'],['Instalações','⌖'],['Câmaras','◉'],['Ligações','↔'],['Planos','◇'],['Planos por câmara','◇'],['Carteiras e preços','▤'],['Licenças','□'],['Alertas','!'],['Eventos','▶'],['Marca própria','●'],['Armazenamento','▥']];
 const KIND={'Revendedores':'resellers','Clientes':'clients','Instalações':'locations','Câmaras':'cameras','Planos':'plans','Planos por câmara':'cameraPlans'};
 const LABEL={resellers:'revendedor',clients:'cliente',locations:'instalação',cameras:'câmara',plans:'plano',cameraPlans:'plano por câmara'};
 const $=q=>document.querySelector(q), $$=q=>[...document.querySelectorAll(q)];
@@ -44,6 +44,19 @@ async function rest(path,opt={}){
  if(r.status===401){await refresh();headers.Authorization='Bearer '+S.session.access_token;r=await fetch(C.url+'/rest/v1/'+path,{...opt,headers})}
  return r;
 }
+async function invokeFunction(name,body){
+ if(!S.session)throw Error('Sessão terminada.');
+ let headers={apikey:C.key,Authorization:'Bearer '+S.session.access_token,'Content-Type':'application/json'};
+ let r=await fetch(C.url+'/functions/v1/'+name,{method:'POST',headers,body:JSON.stringify(body)});
+ if(r.status===401){
+  await refresh();
+  headers.Authorization='Bearer '+S.session.access_token;
+  r=await fetch(C.url+'/functions/v1/'+name,{method:'POST',headers,body:JSON.stringify(body)});
+ }
+ const j=await r.json().catch(()=>({}));
+ if(!r.ok)throw Error(j.error||j.message||'Erro na função Supabase.');
+ return j;
+}
 async function readAccess(path){
  const r=await rest(path),j=await r.json().catch(()=>[]);
  if(!r.ok)throw Error(j.message||j.hint||'Não foi possível validar as permissões.');
@@ -76,6 +89,7 @@ function navForAccess(){
  const allowed=S.access?.type==='reseller'
   ? new Set(['Visão geral','Clientes','Instalações','Câmaras','Ligações','Carteiras e preços','Licenças','Alertas','Eventos','Marca própria','Armazenamento'])
   : new Set(['Visão geral','Instalações','Câmaras','Alertas','Eventos','Armazenamento']);
+ if(canManageUsers())allowed.add('Utilizadores');
  return NAV.filter(([name])=>allowed.has(name));
 }
 function canMutate(kind){
@@ -289,14 +303,55 @@ function events(){return heading('Eventos','Biblioteca e gravação por eventos.
 function branding(){const d=S.ws.records;return heading('Marca própria','Nome, cor, suporte e logótipo por revendedor.')+'<div class="brand-grid"><section class="card"><div class="card-head"><div><h2>Identidade</h2><p>Seleciona um revendedor.</p></div></div><div style="padding:21px"><div class="field"><label>Revendedor</label><select id="brand-reseller" class="select"><option value="">Selecionar</option>'+d.resellers.map(r=>'<option value="'+r.id+'">'+esc(r.name)+'</option>').join('')+'</select></div><div id="brand-form" style="display:grid;gap:14px;margin-top:16px"></div></div></section><section id="brand-preview" class="brand-preview"><div class="empty"><p>Seleciona um revendedor para pré-visualizar.</p></div></section></div>'}
 function storage(){return heading('Armazenamento','Estimativa de capacidade para gravação por eventos.')+'<section class="card"><div class="card-head"><div><h2>Calculadora</h2><p>Estimativa técnica.</p></div></div><div style="padding:21px"><div class="calc"><div class="field"><label>Câmaras</label><input id="ca" class="input c" type="number" value="10"></div><div class="field"><label>Eventos/dia</label><input id="ev" class="input c" type="number" value="30"></div><div class="field"><label>Segundos/evento</label><input id="se" class="input c" type="number" value="30"></div><div class="field"><label>Dias</label><input id="da" class="input c" type="number" value="30"></div><div class="field"><label>Bitrate Mbps</label><input id="bi" class="input c" type="number" step=".1" value="2"></div></div><div class="estimate"><span>Estimativa total</span><strong id="est">—</strong></div><p class="sub">Fórmula: câmaras × eventos × segundos × dias × bitrate ÷ 8.</p></div></section>'}
 
+
+function usersPage(){
+ if(!canManageUsers())return heading('Utilizadores','Gestão de acessos.')+'<section class="card"><div class="empty"><p>O teu perfil não pode gerir utilizadores.</p></div></section>';
+ const d=S.ws.records,resellers=S.access?.type==='platform'?d.resellers:d.resellers.filter(r=>r.id===S.access?.resellerId);
+ if(!resellers.length)return heading('Utilizadores','Convites e permissões.')+'<section class="card"><div class="empty"><p>Cria primeiro um revendedor.</p></div></section>';
+ return heading('Utilizadores','Convida utilizadores e atribui acesso ao Revendedor ou Cliente.')+
+ '<div class="grid-2">'+
+ '<section class="card"><div class="card-head"><div><h2>Novo acesso</h2><p>O utilizador recebe um convite do Supabase.</p></div></div><div style="padding:21px"><div class="form-grid">'+
+ '<div class="field"><label>Revendedor</label><select id="ua-reseller" class="select">'+resellers.map(r=>'<option value="'+r.id+'">'+esc(r.name)+'</option>').join('')+'</select></div>'+
+ '<div class="field"><label>Tipo de acesso</label><select id="ua-target" class="select"><option value="reseller">Revendedor</option><option value="client">Cliente</option></select></div>'+
+ '<div class="field" id="ua-client-wrap" style="display:none"><label>Cliente</label><select id="ua-client" class="select"></select></div>'+
+ '<div class="field"><label>Perfil</label><select id="ua-role" class="select"></select></div>'+
+ '<div class="field"><label>Nome</label><input id="ua-name" class="input" placeholder="Nome do utilizador"></div>'+
+ '<div class="field"><label>Email</label><input id="ua-email" class="input" type="email" placeholder="email@empresa.pt"></div>'+
+ '</div><div style="margin-top:18px"><button id="ua-invite" class="btn btn-primary">Enviar convite</button></div></div></section>'+
+ '<section class="card"><div class="card-head"><div><h2>Acessos atuais</h2><p>Perfis associados ao revendedor selecionado.</p></div></div><div id="ua-list"><div class="empty"><p>A carregar acessos…</p></div></div></section>'+
+ '</div>';
+}
+async function loadUserAccessList(){
+ const reseller=$('#ua-reseller');const host=$('#ua-list');if(!reseller||!host)return;
+ host.innerHTML='<div class="empty"><p>A carregar acessos…</p></div>';
+ try{
+  const data=await invokeFunction('manage-user-access',{action:'list',resellerId:reseller.value});
+  const clientName=id=>S.ws.records.clients.find(c=>c.id===id)?.name||'Cliente';
+  const rows=[
+   ...(data.resellerMembers||[]).map(x=>({email:x.email||'—',name:x.display_name||'',scope:'Revendedor',role:x.role})),
+   ...(data.clientMembers||[]).map(x=>({email:x.email||'—',name:x.display_name||'',scope:clientName(x.client_id),role:x.role}))
+  ];
+  host.innerHTML=rows.length?'<div class="table-wrap"><table class="table"><thead><tr><th>Utilizador</th><th>Acesso</th><th>Perfil</th></tr></thead><tbody>'+rows.map(x=>'<tr><td><strong>'+esc(x.name||x.email)+'</strong><span class="sub">'+esc(x.email)+'</span></td><td>'+esc(x.scope)+'</td><td><span class="badge">'+esc(x.role)+'</span></td></tr>').join('')+'</tbody></table></div>':'<div class="empty"><p>Ainda não existem utilizadores associados.</p></div>';
+ }catch(e){host.innerHTML='<div class="empty"><p>'+esc(e.message)+'</p></div>'}
+}
+function bindUsers(){
+ const reseller=$('#ua-reseller');if(!reseller)return;
+ const target=$('#ua-target'),client=$('#ua-client'),clientWrap=$('#ua-client-wrap'),role=$('#ua-role');
+ const refreshClients=()=>{const rows=S.ws.records.clients.filter(c=>c.resellerId===reseller.value);client.innerHTML=rows.map(c=>'<option value="'+c.id+'">'+esc(c.name)+'</option>').join('')};
+ const refreshRoles=()=>{const isClient=target.value==='client';clientWrap.style.display=isClient?'block':'none';role.innerHTML=(isClient?[['owner','Owner'],['admin','Admin'],['viewer','Viewer']]:[['owner','Owner'],['admin','Admin'],['operator','Operador'],['viewer','Viewer']]).map(x=>'<option value="'+x[0]+'">'+x[1]+'</option>').join('');refreshClients()};
+ reseller.onchange=()=>{refreshClients();void loadUserAccessList()};
+ target.onchange=refreshRoles;
+ refreshRoles();void loadUserAccessList();
+ $('#ua-invite').onclick=async()=>{const btn=$('#ua-invite'),email=$('#ua-email').value.trim(),name=$('#ua-name').value.trim();if(!email){toast('Indica o email.','error');return}if(target.value==='client'&&!client.value){toast('Seleciona um cliente.','error');return}btn.disabled=true;btn.textContent='A enviar…';try{const data=await invokeFunction('manage-user-access',{action:'invite',email,name,targetType:target.value,resellerId:reseller.value,clientId:target.value==='client'?client.value:'',role:role.value});toast(data.invited?'Convite enviado.':'Acesso atualizado.','success');$('#ua-email').value='';$('#ua-name').value='';await loadUserAccessList()}catch(e){toast(e.message,'error')}finally{btn.disabled=false;btn.textContent='Enviar convite'}};
+}
 function renderMain(){
- const host=$('#content'),k=KIND[S.page];let html=overview();if(k)html=directory(k,S.page);else if(S.page==='Carteiras e preços')html=prices();else if(S.page==='Licenças')html=licenses();else if(S.page==='Alertas')html=alerts();else if(S.page==='Ligações')html=connections();else if(S.page==='Eventos')html=events();else if(S.page==='Marca própria')html=branding();else if(S.page==='Armazenamento')html=storage();
+ const host=$('#content'),k=KIND[S.page];let html=overview();if(k)html=directory(k,S.page);else if(S.page==='Utilizadores')html=usersPage();else if(S.page==='Carteiras e preços')html=prices();else if(S.page==='Licenças')html=licenses();else if(S.page==='Alertas')html=alerts();else if(S.page==='Ligações')html=connections();else if(S.page==='Eventos')html=events();else if(S.page==='Marca própria')html=branding();else if(S.page==='Armazenamento')html=storage();
  host.innerHTML='<div class="banner">'+icon('cloud')+'<span><strong>Frontend estático ativo.</strong> HTML + CSS + JavaScript puro com Supabase.</span></div>'+html;bindPage(k);
 }
 function bindPage(k){
  $$('[data-page]').forEach(b=>b.onclick=()=>go(b.dataset.page));
  if(k){$('#search')?.addEventListener('input',e=>{S.search=e.target.value;renderMain()});$('#filter')?.addEventListener('change',e=>{S.filter=e.target.value;renderMain()});$('#add')?.addEventListener('click',()=>editor(k));$('#emptyadd')?.addEventListener('click',()=>editor(k));$$('.edit').forEach(b=>b.onclick=()=>editor(k,b.dataset.id));$$('.del').forEach(b=>b.onclick=()=>remove(k,b.dataset.id))}
- $('#export')?.addEventListener('click',exportData);$('#import')?.addEventListener('click',importData);$$('.price-edit,.lic-edit').forEach(b=>b.onclick=()=>editor('resellers',b.dataset.id));$$('.jump').forEach(b=>b.onclick=()=>go(b.dataset.page));bindBrand();bindCalc();
+ $('#export')?.addEventListener('click',exportData);$('#import')?.addEventListener('click',importData);$$('.price-edit,.lic-edit').forEach(b=>b.onclick=()=>editor('resellers',b.dataset.id));$('.jump').forEach(b=>b.onclick=()=>go(b.dataset.page));bindBrand();bindCalc();bindUsers();
 }
 function bindBrand(){const s=$('#brand-reseller');if(!s)return;s.onchange=()=>{const r=S.ws.records.resellers.find(x=>x.id===s.value),f=$('#brand-form'),p=$('#brand-preview');if(!r){f.innerHTML='';p.innerHTML='<div class="empty"><p>Seleciona um revendedor.</p></div>';return}let logoData=r.logoData||'';f.innerHTML='<div class="field"><label>Nome comercial</label><input id="bn" class="input" value="'+esc(r.brand||r.name)+'"></div><div class="field"><label>Cor</label><input id="bc" class="input" type="color" value="'+esc(r.color||'#2563eb')+'"></div><div class="field"><label>Email suporte</label><input id="bs" class="input" type="email" value="'+esc(r.support||'')+'"></div><div class="field"><label>Logótipo</label><input id="bl" class="input" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml"><span class="sub">Máximo 180 KB.</span></div><button id="brand-save" class="btn btn-primary">Guardar identidade</button>';const preview=()=>{p.innerHTML='<div class="brand-preview-head" style="background:'+$('#bc').value+'">'+(logoData?'<img src="'+logoData+'" style="width:46px;height:46px;object-fit:contain;background:#fff;border-radius:9px;padding:4px">':'<span class="brand-mark">'+icon('shield')+'</span>')+'<strong>'+esc($('#bn').value||r.name)+'</strong></div><div class="brand-preview-body"><h2>Portal do cliente</h2><p class="sub">A mesma aplicação com a identidade do revendedor.</p><div class="camera-placeholder">'+icon('camera')+'<span>Área de câmaras</span></div></div>'};preview();$('#bn').oninput=preview;$('#bc').oninput=preview;$('#bl').onchange=e=>{const file=e.target.files[0];if(!file)return;if(file.size>180000){toast('Logótipo demasiado grande.','error');return}const fr=new FileReader();fr.onload=()=>{logoData=fr.result;preview()};fr.readAsDataURL(file)};$('#brand-save').onclick=async()=>{const n=structuredClone(S.ws.records),x=n.resellers.find(x=>x.id===r.id);x.brand=$('#bn').value.trim()||x.name;x.color=$('#bc').value;x.support=$('#bs').value.trim();x.logoData=logoData;try{await save(n,'Identidade atualizada.')}catch(e){toast(e.message,'error')}}}}
 function bindCalc(){if(!$('#ca'))return;const f=()=>{const gb=Number($('#ca').value)*Number($('#ev').value)*Number($('#se').value)*Number($('#da').value)*Number($('#bi').value)/8000;$('#est').textContent=gb>=1000?(gb/1000).toFixed(2)+' TB':gb.toFixed(1)+' GB'};$$('.c').forEach(x=>x.oninput=f);f()}
