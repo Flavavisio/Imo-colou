@@ -612,43 +612,25 @@ function go(p){
  if(S.page==='Ligações'&&p!=='Ligações')S.imou={appId:'',secret:'',region:S.imou.region||'eu',resellerId:S.imou.resellerId||'',page:1,result:null,selected:'',channel:'0',target:'',callbackConfigured:null,callbackFor:''};
  S.page=p;S.search='';S.filter='all';S.side=false;render();scrollTo({top:0,behavior:'smooth'});
 }
-let navigating=false;
-async function navigateTo(p){
- if(navigating)return;
- navigating=true;
- try{
-  if(!S.session||!S.user){
-   const ok=await session();
-   if(!ok){renderAuth();return}
-  }
-  const previous=S.access;
-  try{await resolveAccess(true)}catch(e){
-   if(!previous)throw e;
-   S.access=previous;S.accessUserId=S.user?.id||S.accessUserId;
-  }
-  go(p);
- }catch(e){
-  toast(e instanceof Error?e.message:'Não foi possível validar o acesso.','error');
-  if(!S.session||!S.user)renderAuth();
- }finally{navigating=false}
+function navigateTo(p){
+ if(!S.access||!S.user||S.accessUserId!==S.user.id){
+  toast('A sessão está ativa, mas o perfil ainda não foi validado. Usa Atualizar para repetir a validação.','error');
+  return;
+ }
+ go(p);
 }
 function render(){
  if(!S.session||!S.user){renderAuth();return}
- if(!S.access||S.accessUserId!==S.user.id){void recoverAccessAndRender();return}
+ if(!S.access||S.accessUserId!==S.user.id){
+  document.getElementById('app').innerHTML='<div class="loading"><div><p>Perfil de acesso não validado.</p><button id="retry-access" class="btn btn-primary" type="button">Validar acesso</button></div></div>';
+  $('#retry-access').onclick=async()=>{try{await resolveAccess(true);await load();render()}catch(e){toast(e.message,'error')}};
+  return;
+ }
  applyBrandTheme();
  document.getElementById('app').innerHTML='<div class="shell">'+sidebar()+'<section class="main">'+topbar()+'<main id="content" class="workspace"></main></section></div>';renderMain();
- $('#menu').onclick=()=>{$('.sidebar').classList.toggle('open')};$('#reload').onclick=async()=>{try{await resolveAccess(true);await load();toast('Dados atualizados.','success');render()}catch(e){toast(e.message,'error')}};$('#logout').onclick=async()=>{try{await fetch(C.url+'/auth/v1/logout',{method:'POST',headers:{apikey:C.key,Authorization:'Bearer '+S.session.access_token}})}catch{}clearSession();renderAuth()};
-}
-let recoveringAccess=false;
-async function recoverAccessAndRender(){
- if(recoveringAccess)return;
- recoveringAccess=true;
- try{
-  if(!S.session||!S.user){const ok=await session();if(!ok){renderAuth();return}}
-  await resolveAccess(true);
-  render();
- }catch(e){toast(e instanceof Error?e.message:'Não foi possível validar o acesso.','error');clearSession();renderAuth()}
- finally{recoveringAccess=false}
+ $('#menu').onclick=()=>{$('.sidebar').classList.toggle('open')};
+ $('#reload').onclick=async()=>{try{await load();toast('Dados atualizados.','success');render()}catch(e){toast(e.message,'error')}};
+ $('#logout').onclick=async()=>{try{await fetch(C.url+'/auth/v1/logout',{method:'POST',headers:{apikey:C.key,Authorization:'Bearer '+S.session.access_token}})}catch{}clearSession();renderAuth()};
 }
 let globalNavigationBound=false;
 function bindGlobalNavigation(){
@@ -661,7 +643,7 @@ function bindGlobalNavigation(){
   if(!page)return;
   e.preventDefault();
   e.stopPropagation();
-  void navigateTo(page);
+  navigateTo(page);
  });
 }
 async function boot(){bindGlobalNavigation();document.getElementById('app').innerHTML='<div class="loading"><div><div class="spinner"></div><p>A abrir o Vigia Cloud…</p></div></div>';if(!await session()){renderAuth();return}try{await resolveAccess();await load();render()}catch(e){clearSession();renderAuth();setTimeout(()=>{const m=$('#authmsg');if(m){m.className='auth-status error';m.textContent=e.message}},0)}}
