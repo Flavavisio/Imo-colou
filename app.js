@@ -8,7 +8,7 @@ const C={
  store:'vigia_session_v2'
 };
 const EMPTY={cameraPlans:[],plans:[],resellers:[],clients:[],locations:[],cameras:[]};
-const S={session:null,user:null,access:null,accessUserId:null,events:[],imou:{appId:'',secret:'',region:'eu',resellerId:'',page:1,result:null,selected:'',channel:'0',target:'',callbackConfigured:null,callbackFor:''},ws:{records:structuredClone(EMPTY),revision:0,activity:[]},hasSnapshot:false,page:'Visão geral',search:'',filter:'all',side:false};
+const S={session:null,user:null,access:null,events:[],imou:{appId:'',secret:'',region:'eu',resellerId:'',page:1,result:null,selected:'',channel:'0',target:'',callbackConfigured:null,callbackFor:''},ws:{records:structuredClone(EMPTY),revision:0,activity:[]},hasSnapshot:false,page:'Visão geral',search:'',filter:'all',side:false};
 const NAV=[['Visão geral','▦'],['Revendedores','▣'],['Clientes','◉'],['Utilizadores','◎'],['Instalações','⌖'],['Câmaras','◉'],['Ligações','↔'],['Planos','◇'],['Planos por câmara','◇'],['Carteiras e preços','▤'],['Licenças','□'],['Alertas','!'],['Eventos','▶'],['Marca própria','●'],['Armazenamento','▥']];
 const PLATFORM_NAV_GROUPS=[
  ['SUPER ADMIN',['Visão geral']],
@@ -38,7 +38,7 @@ const icon=n=>({shield:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColo
 
 function toast(text,type=''){let box=$('.toasts');if(!box){box=document.createElement('div');box.className='toasts';document.body.appendChild(box)}const t=document.createElement('div');t.className='toast '+type;t.textContent=text;box.appendChild(t);setTimeout(()=>t.remove(),3500)}
 function storeSession(x){S.session=x;localStorage.setItem(C.store,JSON.stringify(x))}
-function clearSession(){S.session=null;S.user=null;S.access=null;S.accessUserId=null;S.events=[];S.imou={appId:'',secret:'',region:'eu',resellerId:'',page:1,result:null,selected:'',channel:'0',target:'',callbackConfigured:null,callbackFor:''};localStorage.removeItem(C.store)}
+function clearSession(){S.session=null;S.user=null;S.access=null;S.events=[];S.imou={appId:'',secret:'',region:'eu',resellerId:'',page:1,result:null,selected:'',channel:'0',target:'',callbackConfigured:null,callbackFor:''};localStorage.removeItem(C.store)}
 function getStored(){try{return JSON.parse(localStorage.getItem(C.store)||'null')}catch{return null}}
 
 async function auth(path,opt={}){
@@ -80,29 +80,26 @@ async function readAccess(path){
 }
 async function resolveAccess(force=false){
  if(!S.user?.id)throw Error('Sessão de utilizador indisponível.');
- if(!force&&S.access&&S.accessUserId===S.user.id)return S.access;
+ if(!force&&S.access)return S.access;
  const uid=encodeURIComponent(S.user.id);
  const pa=await readAccess('platform_admins?user_id=eq.'+uid+'&select=user_id');
  if(pa.length){
   S.access=Object.freeze({type:'platform',role:'super_admin'});
-  S.accessUserId=S.user.id;
   return S.access;
  }
  const rm=await readAccess('reseller_members?user_id=eq.'+uid+'&select=reseller_id,role,created_at&order=created_at.asc');
  if(rm.length){
   const rank={owner:0,admin:1,operator:2,viewer:3};rm.sort((a,b)=>(rank[a.role]??9)-(rank[b.role]??9));
   S.access=Object.freeze({type:'reseller',role:rm[0].role,resellerId:rm[0].reseller_id});
-  S.accessUserId=S.user.id;
   return S.access;
  }
  const cm=await readAccess('client_members?user_id=eq.'+uid+'&select=client_id,reseller_id,role,created_at&order=created_at.asc');
  if(cm.length){
   const rank={owner:0,admin:1,viewer:2};cm.sort((a,b)=>(rank[a.role]??9)-(rank[b.role]??9));
   S.access=Object.freeze({type:'client',role:cm[0].role,clientId:cm[0].client_id,resellerId:cm[0].reseller_id});
-  S.accessUserId=S.user.id;
   return S.access;
  }
- S.access=null;S.accessUserId=null;
+ S.access=null;
  throw Error('A conta está ativa, mas não tem um perfil de acesso associado.');
 }
 function accessLabel(){
@@ -613,15 +610,15 @@ function go(p){
  S.page=p;S.search='';S.filter='all';S.side=false;render();scrollTo({top:0,behavior:'smooth'});
 }
 function navigateTo(p){
- if(!S.access||!S.user||S.accessUserId!==S.user.id){
-  toast('A sessão está ativa, mas o perfil ainda não foi validado. Usa Atualizar para repetir a validação.','error');
+ if(!S.access){
+  toast('O perfil de acesso ainda não está disponível. Usa Atualizar para tentar novamente.','error');
   return;
  }
  go(p);
 }
 function render(){
  if(!S.session||!S.user){renderAuth();return}
- if(!S.access||S.accessUserId!==S.user.id){
+ if(!S.access){
   document.getElementById('app').innerHTML='<div class="loading"><div><p>Perfil de acesso não validado.</p><button id="retry-access" class="btn btn-primary" type="button">Validar acesso</button></div></div>';
   $('#retry-access').onclick=async()=>{try{await resolveAccess(true);await load();render()}catch(e){toast(e.message,'error')}};
   return;
