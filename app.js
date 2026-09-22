@@ -10,6 +10,22 @@ const C={
 const EMPTY={cameraPlans:[],plans:[],resellers:[],clients:[],locations:[],cameras:[]};
 const S={session:null,user:null,access:null,events:[],imou:{appId:'',secret:'',region:'eu',resellerId:'',page:1,result:null,selected:'',channel:'0',target:'',callbackConfigured:null,callbackFor:''},ws:{records:structuredClone(EMPTY),revision:0,activity:[]},hasSnapshot:false,page:'Visão geral',search:'',filter:'all',side:false};
 const NAV=[['Visão geral','▦'],['Revendedores','▣'],['Clientes','◉'],['Utilizadores','◎'],['Instalações','⌖'],['Câmaras','◉'],['Ligações','↔'],['Planos','◇'],['Planos por câmara','◇'],['Carteiras e preços','▤'],['Licenças','□'],['Alertas','!'],['Eventos','▶'],['Marca própria','●'],['Armazenamento','▥']];
+const PLATFORM_NAV_GROUPS=[
+ ['SUPER ADMIN',['Visão geral']],
+ ['GESTÃO DA PLATAFORMA',['Revendedores','Utilizadores','Planos','Planos por câmara','Licenças','Carteiras e preços']],
+ ['OPERAÇÃO GLOBAL',['Clientes','Instalações','Câmaras','Ligações','Eventos','Alertas']],
+ ['CONFIGURAÇÃO',['Marca própria','Armazenamento']]
+];
+const RESELLER_NAV_GROUPS=[
+ ['PORTAL REVENDEDOR',['Visão geral']],
+ ['OPERAÇÃO',['Clientes','Instalações','Câmaras','Ligações','Eventos','Alertas']],
+ ['GESTÃO',['Utilizadores','Carteiras e preços','Licenças','Marca própria','Armazenamento']]
+];
+const CLIENT_NAV_GROUPS=[
+ ['PORTAL CLIENTE',['Visão geral']],
+ ['VIDEOVIGILÂNCIA',['Instalações','Câmaras','Eventos','Alertas','Armazenamento']]
+];
+const NAV_MAP=Object.fromEntries(NAV);
 const KIND={'Revendedores':'resellers','Clientes':'clients','Instalações':'locations','Câmaras':'cameras','Planos':'plans','Planos por câmara':'cameraPlans'};
 const LABEL={resellers:'revendedor',clients:'cliente',locations:'instalação',cameras:'câmara',plans:'plano',cameraPlans:'plano por câmara'};
 const $=q=>document.querySelector(q), $$=q=>[...document.querySelectorAll(q)];
@@ -79,9 +95,9 @@ async function resolveAccess(){
  throw Error('A conta está ativa, mas ainda não foi associada a um Revendedor ou Cliente.');
 }
 function accessLabel(){
- if(S.access?.type==='platform')return 'SUPER ADMIN';
- if(S.access?.type==='reseller')return 'REVENDEDOR · '+String(S.access.role||'').toUpperCase();
- if(S.access?.type==='client')return 'CLIENTE';
+ if(S.access?.type==='platform')return 'SUPER ADMIN · GESTÃO GLOBAL';
+ if(S.access?.type==='reseller')return 'PORTAL REVENDEDOR · '+String(S.access.role||'').toUpperCase();
+ if(S.access?.type==='client')return 'PORTAL CLIENTE';
  return 'UTILIZADOR';
 }
 function navForAccess(){
@@ -91,6 +107,25 @@ function navForAccess(){
   : new Set(['Visão geral','Instalações','Câmaras','Alertas','Eventos','Armazenamento']);
  if(canManageUsers())allowed.add('Utilizadores');
  return NAV.filter(([name])=>allowed.has(name));
+}
+function allowedPageNames(){return new Set(navForAccess().map(([name])=>name))}
+function navButton(name){
+ const iconText=NAV_MAP[name]||'•';
+ return '<button class="nav-btn '+(S.page===name?'active':'')+'" data-page="'+esc(name)+'"><span>'+esc(iconText)+'</span><span>'+esc(name)+'</span></button>';
+}
+function navSections(){
+ let groups=S.access?.type==='platform'?PLATFORM_NAV_GROUPS:S.access?.type==='reseller'?RESELLER_NAV_GROUPS:CLIENT_NAV_GROUPS;
+ const allowed=allowedPageNames();
+ return groups.map(([label,pages])=>{
+  const visible=pages.filter(name=>allowed.has(name));
+  if(!visible.length)return '';
+  return '<div class="nav-section"><div class="nav-section-title">'+esc(label)+'</div>'+visible.map(navButton).join('')+'</div>';
+ }).join('');
+}
+function roleBanner(){
+ if(S.access?.type==='platform')return '<div class="banner role-banner super-admin-banner">'+icon('shield')+'<span><strong>Modo Super Admin.</strong> Estás a gerir toda a plataforma Vigia Cloud. Os menus abaixo são de administração global.</span></div>';
+ if(S.access?.type==='reseller')return '<div class="banner role-banner">'+icon('shield')+'<span><strong>Portal Revendedor.</strong> Só tens acesso aos dados do teu revendedor.</span></div>';
+ return '<div class="banner role-banner">'+icon('shield')+'<span><strong>Portal Cliente.</strong> Acesso limitado às instalações, câmaras e eventos associados à tua conta.</span></div>';
 }
 function canMutate(kind){
  if(S.access?.type==='platform')return true;
@@ -264,8 +299,8 @@ function renderAuth(){
  $('#login').onsubmit=async e=>{e.preventDefault();const b=e.submitter,m=$('#authmsg');b.disabled=true;b.textContent='A validar…';m.innerHTML='';try{await login($('#email').value.trim(),$('#pass').value);await session();await resolveAccess();await load();render()}catch(x){clearSession();m.className='auth-status error';m.textContent=x.message;b.disabled=false;b.textContent='Entrar no Vigia Cloud'}};
  $('#recover').onclick=async()=>{const m=$('#authmsg');try{await auth('/recover',{method:'POST',body:JSON.stringify({email:$('#email').value.trim()})});m.className='auth-status ok';m.textContent='Email de recuperação enviado.'}catch(x){m.className='auth-status error';m.textContent=x.message}};
 }
-function sidebar(){return '<aside class="sidebar '+(S.side?'open':'')+'"><div class="brand">'+logo()+'</div><div class="nav-label">'+esc(S.access?.type==='platform'?'PLATAFORMA':S.access?.type==='reseller'?'PORTAL REVENDEDOR':'PORTAL CLIENTE')+'</div><nav class="nav">'+navForAccess().map(([n,i])=>'<button class="nav-btn '+(S.page===n?'active':'')+'" data-page="'+esc(n)+'"><span>'+esc(i)+'</span><span>'+esc(n)+'</span></button>').join('')+'</nav><div class="sidebar-foot"><div class="user"><span class="avatar">'+esc((S.user?.email||'V')[0].toUpperCase())+'</span><div><strong>'+esc(S.user?.email||'')+'</strong><small>'+esc(accessLabel())+'</small></div></div><button class="logout" id="logout">Terminar sessão</button></div></aside>'}
-function topbar(){const brand=S.access?.type==='platform'?'Vigia Cloud':activeBrand().name;return '<header class="topbar"><div class="crumbs"><button id="menu" class="icon-btn mobile-menu">'+icon('menu')+'</button><span>'+esc(brand)+'</span><span>/</span><strong>'+esc(S.page)+'</strong></div><div class="top-actions"><span class="sync">Supabase ligado</span><button id="reload" class="btn btn-ghost">'+icon('refresh')+'<span>Atualizar</span></button></div></header>'}
+function sidebar(){return '<aside class="sidebar '+(S.side?'open':'')+'"><div class="brand">'+logo()+'</div><div class="access-mode '+(S.access?.type==='platform'?'platform':'')+'"><span class="access-dot"></span><div><strong>'+esc(S.access?.type==='platform'?'SUPER ADMIN':S.access?.type==='reseller'?'REVENDEDOR':'CLIENTE')+'</strong><small>'+esc(S.access?.type==='platform'?'Gestão global da plataforma':S.access?.type==='reseller'?'Área exclusiva do revendedor':'Área exclusiva do cliente')+'</small></div></div><nav class="nav">'+navSections()+'</nav><div class="sidebar-foot"><div class="user"><span class="avatar">'+esc((S.user?.email||'V')[0].toUpperCase())+'</span><div><strong>'+esc(S.user?.email||'')+'</strong><small>'+esc(accessLabel())+'</small></div></div><button class="logout" id="logout">Terminar sessão</button></div></aside>'}
+function topbar(){const brand=S.access?.type==='platform'?'Vigia Cloud':activeBrand().name;return '<header class="topbar"><div class="crumbs"><button id="menu" class="icon-btn mobile-menu">'+icon('menu')+'</button><span>'+esc(brand)+'</span><span>/</span><strong>'+esc(S.page)+'</strong></div><div class="top-actions">'+(S.access?.type==='platform'?'<span class="role-chip">SUPER ADMIN</span>':'')+'<span class="sync">Supabase ligado</span><button id="reload" class="btn btn-ghost">'+icon('refresh')+'<span>Atualizar</span></button></div></header>'}
 
 function overview(){
  const d=S.ws.records,alerts=makeAlerts(d),platform=S.access?.type==='platform';
@@ -488,13 +523,15 @@ function bindUsers(){
  $('#ua-invite').onclick=async()=>{const btn=$('#ua-invite'),email=$('#ua-email').value.trim(),name=$('#ua-name').value.trim();if(!email){toast('Indica o email.','error');return}if(target.value==='client'&&!client.value){toast('Seleciona um cliente.','error');return}btn.disabled=true;btn.textContent='A enviar…';try{const data=await invokeFunction('manage-user-access',{action:'invite',email,name,targetType:target.value,resellerId:reseller.value,clientId:target.value==='client'?client.value:'',role:role.value});toast(data.invited?'Convite enviado.':'Acesso atualizado.','success');$('#ua-email').value='';$('#ua-name').value='';await loadUserAccessList()}catch(e){toast(e.message,'error')}finally{btn.disabled=false;btn.textContent='Enviar convite'}};
 }
 function renderMain(){
- const host=$('#content'),k=KIND[S.page];let html=overview();if(k)html=directory(k,S.page);else if(S.page==='Utilizadores')html=usersPage();else if(S.page==='Carteiras e preços')html=prices();else if(S.page==='Licenças')html=licenses();else if(S.page==='Alertas')html=alerts();else if(S.page==='Ligações')html=connections();else if(S.page==='Eventos')html=events();else if(S.page==='Marca própria')html=branding();else if(S.page==='Armazenamento')html=storage();
- host.innerHTML='<div class="banner">'+icon('cloud')+'<span><strong>Frontend estático ativo.</strong> HTML + CSS + JavaScript puro com Supabase.</span></div>'+html;bindPage(k);
+ const host=$('#content');
+ if(!allowedPageNames().has(S.page))S.page='Visão geral';
+ const k=KIND[S.page];let html=overview();if(k)html=directory(k,S.page);else if(S.page==='Utilizadores')html=usersPage();else if(S.page==='Carteiras e preços')html=prices();else if(S.page==='Licenças')html=licenses();else if(S.page==='Alertas')html=alerts();else if(S.page==='Ligações')html=connections();else if(S.page==='Eventos')html=events();else if(S.page==='Marca própria')html=branding();else if(S.page==='Armazenamento')html=storage();
+ host.innerHTML=roleBanner()+html;bindPage(k);
 }
 function bindPage(k){
- $$('[data-page]').forEach(b=>b.onclick=()=>go(b.dataset.page));
- if(k){$('#search')?.addEventListener('input',e=>{S.search=e.target.value;renderMain()});$('#filter')?.addEventListener('change',e=>{S.filter=e.target.value;renderMain()});$('#add')?.addEventListener('click',()=>editor(k));$('#emptyadd')?.addEventListener('click',()=>editor(k));$$('.edit').forEach(b=>b.onclick=()=>editor(k,b.dataset.id));$$('.del').forEach(b=>b.onclick=()=>remove(k,b.dataset.id))}
- $('#export')?.addEventListener('click',exportData);$('#import')?.addEventListener('click',importData);$$('.price-edit,.lic-edit').forEach(b=>b.onclick=()=>editor('resellers',b.dataset.id));$('.jump').forEach(b=>b.onclick=()=>go(b.dataset.page));bindBrand();bindCalc();bindUsers();
+ $('[data-page]').forEach(b=>b.onclick=()=>go(b.dataset.page));
+ if(k){$('#search')?.addEventListener('input',e=>{S.search=e.target.value;renderMain()});$('#filter')?.addEventListener('change',e=>{S.filter=e.target.value;renderMain()});$('#add')?.addEventListener('click',()=>editor(k));$('#emptyadd')?.addEventListener('click',()=>editor(k));$('.edit').forEach(b=>b.onclick=()=>editor(k,b.dataset.id));$('.del').forEach(b=>b.onclick=()=>remove(k,b.dataset.id))}
+ $('#export')?.addEventListener('click',exportData);$('#import')?.addEventListener('click',importData);$('.price-edit,.lic-edit').forEach(b=>b.onclick=()=>editor('resellers',b.dataset.id));$('.jump').forEach(b=>b.onclick=()=>go(b.dataset.page));bindBrand();bindCalc();bindUsers();bindImou();bindEvents();
 }
 async function uploadBrandLogo(resellerId,file){
  if(!file)return '';
@@ -548,7 +585,7 @@ function bindCalc(){if(!$('#ca'))return;const f=()=>{const gb=Number($('#ca').va
 function exportData(){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify({format:'vigia-cloud-html-v1',exportedAt:new Date().toISOString(),...S.ws},null,2)],{type:'application/json'}));a.download='vigia-cloud-dados.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),700)}
 function importData(){const i=document.createElement('input');i.type='file';i.accept='.json,application/json';i.onchange=()=>{const f=i.files[0];if(!f)return;const r=new FileReader();r.onload=async()=>{try{const j=JSON.parse(r.result),records=j.records||j;validate(records);if(!confirm('Substituir o workspace atual por estes dados?'))return;await save(records,'Dados importados.')}catch(e){toast(e.message,'error')}};r.readAsText(f)};i.click()}
 
-function go(p){if(S.page==='Ligações'&&p!=='Ligações')S.imou={appId:'',secret:'',region:S.imou.region||'eu',resellerId:S.imou.resellerId||'',page:1,result:null,selected:'',channel:'0',target:'',callbackConfigured:null,callbackFor:''};S.page=p;S.search='';S.filter='all';S.side=false;render();scrollTo({top:0,behavior:'smooth'})}
+function go(p){if(!allowedPageNames().has(p)){toast('Este menu não está disponível para o teu perfil.','error');return}if(S.page==='Ligações'&&p!=='Ligações')S.imou={appId:'',secret:'',region:S.imou.region||'eu',resellerId:S.imou.resellerId||'',page:1,result:null,selected:'',channel:'0',target:'',callbackConfigured:null,callbackFor:''};S.page=p;S.search='';S.filter='all';S.side=false;render();scrollTo({top:0,behavior:'smooth'})}
 function render(){
  applyBrandTheme();
  document.getElementById('app').innerHTML='<div class="shell">'+sidebar()+'<section class="main">'+topbar()+'<main id="content" class="workspace"></main></section></div>';renderMain();
