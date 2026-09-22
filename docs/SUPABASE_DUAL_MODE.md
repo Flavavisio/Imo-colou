@@ -17,7 +17,7 @@ A v6 original continua funcional em D1/R2. O código passa a suportar um segundo
 - Supabase Auth por email + palavra-passe
 - o utilizador define a própria palavra-passe na ativação
 - confirmação de email pelo Supabase
-- `flavio.rosa87@gmail.com` é promovido a Super Admin apenas depois da conta estar confirmada, através do bootstrap já configurado no banco
+- `flavio.rosa87@icloud.com` é promovido a Super Admin apenas depois da conta estar confirmada, através do bootstrap já configurado no banco
 - o endpoint `/api/workspace` mantém o mesmo contrato da v6, mas passa a ler/escrever `workspace_snapshots`
 - RLS limita o snapshot ao respetivo `auth.uid()` **e exige `platform_admin`** nesta fase transitória
 
