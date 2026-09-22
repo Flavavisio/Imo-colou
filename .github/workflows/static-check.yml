@@ -1,0 +1,24 @@
+name: Static frontend check
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check required static files
+        run: |
+          test -f index.html
+          test -f styles.css
+          test -f app.js
+          grep -q 'styles.css' index.html
+          grep -q 'app.js' index.html
+      - name: Check JavaScript syntax
+        run: node --check app.js
