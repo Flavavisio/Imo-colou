@@ -8,7 +8,7 @@ const C={
  store:'vigia_session_v2'
 };
 const EMPTY={cameraPlans:[],plans:[],resellers:[],clients:[],locations:[],cameras:[]};
-const S={session:null,user:null,access:null,events:[],imou:{appId:'',secret:'',region:'eu',resellerId:'',page:1,result:null,selected:'',channel:'0',target:'',callbackConfigured:null,callbackFor:''},ws:{records:structuredClone(EMPTY),revision:0,activity:[]},hasSnapshot:false,page:'Visão geral',search:'',filter:'all',side:false};
+const S={session:null,user:null,access:null,accessUserId:null,events:[],imou:{appId:'',secret:'',region:'eu',resellerId:'',page:1,result:null,selected:'',channel:'0',target:'',callbackConfigured:null,callbackFor:''},ws:{records:structuredClone(EMPTY),revision:0,activity:[]},hasSnapshot:false,page:'Visão geral',search:'',filter:'all',side:false};
 const NAV=[['Visão geral','▦'],['Revendedores','▣'],['Clientes','◉'],['Utilizadores','◎'],['Instalações','⌖'],['Câmaras','◉'],['Ligações','↔'],['Planos','◇'],['Planos por câmara','◇'],['Carteiras e preços','▤'],['Licenças','□'],['Alertas','!'],['Eventos','▶'],['Marca própria','●'],['Armazenamento','▥']];
 const PLATFORM_NAV_GROUPS=[
  ['SUPER ADMIN',['Visão geral']],
@@ -38,7 +38,7 @@ const icon=n=>({shield:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColo
 
 function toast(text,type=''){let box=$('.toasts');if(!box){box=document.createElement('div');box.className='toasts';document.body.appendChild(box)}const t=document.createElement('div');t.className='toast '+type;t.textContent=text;box.appendChild(t);setTimeout(()=>t.remove(),3500)}
 function storeSession(x){S.session=x;localStorage.setItem(C.store,JSON.stringify(x))}
-function clearSession(){S.session=null;S.user=null;S.access=null;S.events=[];S.imou={appId:'',secret:'',region:'eu',resellerId:'',page:1,result:null,selected:'',channel:'0',target:'',callbackConfigured:null,callbackFor:''};localStorage.removeItem(C.store)}
+function clearSession(){S.session=null;S.user=null;S.access=null;S.accessUserId=null;S.events=[];S.imou={appId:'',secret:'',region:'eu',resellerId:'',page:1,result:null,selected:'',channel:'0',target:'',callbackConfigured:null,callbackFor:''};localStorage.removeItem(C.store)}
 function getStored(){try{return JSON.parse(localStorage.getItem(C.store)||'null')}catch{return null}}
 
 async function auth(path,opt={}){
@@ -78,21 +78,32 @@ async function readAccess(path){
  if(!r.ok)throw Error(j.message||j.hint||'Não foi possível validar as permissões.');
  return j;
 }
-async function resolveAccess(){
+async function resolveAccess(force=false){
+ if(!S.user?.id)throw Error('Sessão de utilizador indisponível.');
+ if(!force&&S.access&&S.accessUserId===S.user.id)return S.access;
  const uid=encodeURIComponent(S.user.id);
  const pa=await readAccess('platform_admins?user_id=eq.'+uid+'&select=user_id');
- if(pa.length){S.access={type:'platform',role:'super_admin'};return S.access}
+ if(pa.length){
+  S.access=Object.freeze({type:'platform',role:'super_admin'});
+  S.accessUserId=S.user.id;
+  return S.access;
+ }
  const rm=await readAccess('reseller_members?user_id=eq.'+uid+'&select=reseller_id,role,created_at&order=created_at.asc');
  if(rm.length){
   const rank={owner:0,admin:1,operator:2,viewer:3};rm.sort((a,b)=>(rank[a.role]??9)-(rank[b.role]??9));
-  S.access={type:'reseller',role:rm[0].role,resellerId:rm[0].reseller_id};return S.access;
+  S.access=Object.freeze({type:'reseller',role:rm[0].role,resellerId:rm[0].reseller_id});
+  S.accessUserId=S.user.id;
+  return S.access;
  }
  const cm=await readAccess('client_members?user_id=eq.'+uid+'&select=client_id,reseller_id,role,created_at&order=created_at.asc');
  if(cm.length){
   const rank={owner:0,admin:1,viewer:2};cm.sort((a,b)=>(rank[a.role]??9)-(rank[b.role]??9));
-  S.access={type:'client',role:cm[0].role,clientId:cm[0].client_id,resellerId:cm[0].reseller_id};return S.access;
+  S.access=Object.freeze({type:'client',role:cm[0].role,clientId:cm[0].client_id,resellerId:cm[0].reseller_id});
+  S.accessUserId=S.user.id;
+  return S.access;
  }
- throw Error('A conta está ativa, mas ainda não foi associada a um Revendedor ou Cliente.');
+ S.access=null;S.accessUserId=null;
+ throw Error('A conta está ativa, mas não tem um perfil de acesso associado.');
 }
 function accessLabel(){
  if(S.access?.type==='platform')return 'SUPER ADMIN · GESTÃO GLOBAL';
@@ -102,11 +113,16 @@ function accessLabel(){
 }
 function navForAccess(){
  if(S.access?.type==='platform')return NAV;
- const allowed=S.access?.type==='reseller'
-  ? new Set(['Visão geral','Clientes','Instalações','Câmaras','Ligações','Carteiras e preços','Licenças','Alertas','Eventos','Marca própria','Armazenamento'])
-  : new Set(['Visão geral','Instalações','Câmaras','Alertas','Eventos','Armazenamento']);
- if(canManageUsers())allowed.add('Utilizadores');
- return NAV.filter(([name])=>allowed.has(name));
+ if(S.access?.type==='reseller'){
+  const allowed=new Set(['Visão geral','Clientes','Instalações','Câmaras','Ligações','Carteiras e preços','Licenças','Alertas','Eventos','Marca própria','Armazenamento']);
+  if(canManageUsers())allowed.add('Utilizadores');
+  return NAV.filter(([name])=>allowed.has(name));
+ }
+ if(S.access?.type==='client'){
+  const allowed=new Set(['Visão geral','Instalações','Câmaras','Alertas','Eventos','Armazenamento']);
+  return NAV.filter(([name])=>allowed.has(name));
+ }
+ return [];
 }
 function allowedPageNames(){return new Set(navForAccess().map(([name])=>name))}
 function navButton(name){
@@ -114,7 +130,7 @@ function navButton(name){
  return '<button type="button" class="nav-btn '+(S.page===name?'active':'')+'" data-page="'+esc(name)+'"><span>'+esc(iconText)+'</span><span>'+esc(name)+'</span></button>';
 }
 function navSections(){
- let groups=S.access?.type==='platform'?PLATFORM_NAV_GROUPS:S.access?.type==='reseller'?RESELLER_NAV_GROUPS:CLIENT_NAV_GROUPS;
+ let groups=S.access?.type==='platform'?PLATFORM_NAV_GROUPS:S.access?.type==='reseller'?RESELLER_NAV_GROUPS:S.access?.type==='client'?CLIENT_NAV_GROUPS:[];
  const allowed=allowedPageNames();
  return groups.map(([label,pages])=>{
   const visible=pages.filter(name=>allowed.has(name));
@@ -125,7 +141,8 @@ function navSections(){
 function roleBanner(){
  if(S.access?.type==='platform')return '<div class="banner role-banner super-admin-banner">'+icon('shield')+'<span><strong>Modo Super Admin.</strong> Estás a gerir toda a plataforma Vigia Cloud. Os menus abaixo são de administração global.</span></div>';
  if(S.access?.type==='reseller')return '<div class="banner role-banner">'+icon('shield')+'<span><strong>Portal Revendedor.</strong> Só tens acesso aos dados do teu revendedor.</span></div>';
- return '<div class="banner role-banner">'+icon('shield')+'<span><strong>Portal Cliente.</strong> Acesso limitado às instalações, câmaras e eventos associados à tua conta.</span></div>';
+ if(S.access?.type==='client')return '<div class="banner role-banner">'+icon('shield')+'<span><strong>Portal Cliente.</strong> Acesso limitado às instalações, câmaras e eventos associados à tua conta.</span></div>';
+ return '<div class="banner role-banner"><span><strong>A validar permissões…</strong> A aplicação não irá assumir um perfil de Cliente sem confirmação do Supabase.</span></div>';
 }
 function canMutate(kind){
  if(S.access?.type==='platform')return true;
@@ -299,7 +316,13 @@ function renderAuth(){
  $('#login').onsubmit=async e=>{e.preventDefault();const b=e.submitter,m=$('#authmsg');b.disabled=true;b.textContent='A validar…';m.innerHTML='';try{await login($('#email').value.trim(),$('#pass').value);await session();await resolveAccess();await load();render()}catch(x){clearSession();m.className='auth-status error';m.textContent=x.message;b.disabled=false;b.textContent='Entrar no Vigia Cloud'}};
  $('#recover').onclick=async()=>{const m=$('#authmsg');try{await auth('/recover',{method:'POST',body:JSON.stringify({email:$('#email').value.trim()})});m.className='auth-status ok';m.textContent='Email de recuperação enviado.'}catch(x){m.className='auth-status error';m.textContent=x.message}};
 }
-function sidebar(){return '<aside class="sidebar '+(S.side?'open':'')+'"><div class="brand">'+logo()+'</div><div class="access-mode '+(S.access?.type==='platform'?'platform':'')+'"><span class="access-dot"></span><div><strong>'+esc(S.access?.type==='platform'?'SUPER ADMIN':S.access?.type==='reseller'?'REVENDEDOR':'CLIENTE')+'</strong><small>'+esc(S.access?.type==='platform'?'Gestão global da plataforma':S.access?.type==='reseller'?'Área exclusiva do revendedor':'Área exclusiva do cliente')+'</small></div></div><nav class="nav">'+navSections()+'</nav><div class="sidebar-foot"><div class="user"><span class="avatar">'+esc((S.user?.email||'V')[0].toUpperCase())+'</span><div><strong>'+esc(S.user?.email||'')+'</strong><small>'+esc(accessLabel())+'</small></div></div><button class="logout" id="logout">Terminar sessão</button></div></aside>'}
+function accessPresentation(){
+ if(S.access?.type==='platform')return {title:'SUPER ADMIN',detail:'Gestão global da plataforma',cls:'platform'};
+ if(S.access?.type==='reseller')return {title:'REVENDEDOR',detail:'Área exclusiva do revendedor',cls:''};
+ if(S.access?.type==='client')return {title:'CLIENTE',detail:'Área exclusiva do cliente',cls:''};
+ return {title:'A VALIDAR',detail:'Permissões em verificação',cls:''};
+}
+function sidebar(){const ap=accessPresentation();return '<aside class="sidebar '+(S.side?'open':'')+'"><div class="brand">'+logo()+'</div><div class="access-mode '+ap.cls+'"><span class="access-dot"></span><div><strong>'+esc(ap.title)+'</strong><small>'+esc(ap.detail)+'</small></div></div><nav class="nav">'+navSections()+'</nav><div class="sidebar-foot"><div class="user"><span class="avatar">'+esc((S.user?.email||'V')[0].toUpperCase())+'</span><div><strong>'+esc(S.user?.email||'Sessão')+'</strong><small>'+esc(accessLabel())+'</small></div></div><button class="logout" id="logout">Terminar sessão</button></div></aside>'}
 function topbar(){const brand=S.access?.type==='platform'?'Vigia Cloud':activeBrand().name;return '<header class="topbar"><div class="crumbs"><button id="menu" class="icon-btn mobile-menu">'+icon('menu')+'</button><span>'+esc(brand)+'</span><span>/</span><strong>'+esc(S.page)+'</strong></div><div class="top-actions">'+(S.access?.type==='platform'?'<span class="role-chip">SUPER ADMIN</span>':'')+'<span class="sync">Supabase ligado</span><button id="reload" class="btn btn-ghost">'+icon('refresh')+'<span>Atualizar</span></button></div></header>'}
 
 function overview(){
@@ -584,11 +607,48 @@ function bindCalc(){if(!$('#ca'))return;const f=()=>{const gb=Number($('#ca').va
 function exportData(){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify({format:'vigia-cloud-html-v1',exportedAt:new Date().toISOString(),...S.ws},null,2)],{type:'application/json'}));a.download='vigia-cloud-dados.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),700)}
 function importData(){const i=document.createElement('input');i.type='file';i.accept='.json,application/json';i.onchange=()=>{const f=i.files[0];if(!f)return;const r=new FileReader();r.onload=async()=>{try{const j=JSON.parse(r.result),records=j.records||j;validate(records);if(!confirm('Substituir o workspace atual por estes dados?'))return;await save(records,'Dados importados.')}catch(e){toast(e.message,'error')}};r.readAsText(f)};i.click()}
 
-function go(p){if(!allowedPageNames().has(p)){toast('Este menu não está disponível para o teu perfil.','error');return}if(S.page==='Ligações'&&p!=='Ligações')S.imou={appId:'',secret:'',region:S.imou.region||'eu',resellerId:S.imou.resellerId||'',page:1,result:null,selected:'',channel:'0',target:'',callbackConfigured:null,callbackFor:''};S.page=p;S.search='';S.filter='all';S.side=false;render();scrollTo({top:0,behavior:'smooth'})}
+function go(p){
+ if(!allowedPageNames().has(p)){toast('Este menu não está disponível para o teu perfil.','error');return}
+ if(S.page==='Ligações'&&p!=='Ligações')S.imou={appId:'',secret:'',region:S.imou.region||'eu',resellerId:S.imou.resellerId||'',page:1,result:null,selected:'',channel:'0',target:'',callbackConfigured:null,callbackFor:''};
+ S.page=p;S.search='';S.filter='all';S.side=false;render();scrollTo({top:0,behavior:'smooth'});
+}
+let navigating=false;
+async function navigateTo(p){
+ if(navigating)return;
+ navigating=true;
+ try{
+  if(!S.session||!S.user){
+   const ok=await session();
+   if(!ok){renderAuth();return}
+  }
+  const previous=S.access;
+  try{await resolveAccess(true)}catch(e){
+   if(!previous)throw e;
+   S.access=previous;S.accessUserId=S.user?.id||S.accessUserId;
+  }
+  go(p);
+ }catch(e){
+  toast(e instanceof Error?e.message:'Não foi possível validar o acesso.','error');
+  if(!S.session||!S.user)renderAuth();
+ }finally{navigating=false}
+}
 function render(){
+ if(!S.session||!S.user){renderAuth();return}
+ if(!S.access||S.accessUserId!==S.user.id){void recoverAccessAndRender();return}
  applyBrandTheme();
  document.getElementById('app').innerHTML='<div class="shell">'+sidebar()+'<section class="main">'+topbar()+'<main id="content" class="workspace"></main></section></div>';renderMain();
- $('#menu').onclick=()=>{$('.sidebar').classList.toggle('open')};$('#reload').onclick=async()=>{try{await load();toast('Dados atualizados.','success');render()}catch(e){toast(e.message,'error')}};$('#logout').onclick=async()=>{try{await fetch(C.url+'/auth/v1/logout',{method:'POST',headers:{apikey:C.key,Authorization:'Bearer '+S.session.access_token}})}catch{}clearSession();renderAuth()};
+ $('#menu').onclick=()=>{$('.sidebar').classList.toggle('open')};$('#reload').onclick=async()=>{try{await resolveAccess(true);await load();toast('Dados atualizados.','success');render()}catch(e){toast(e.message,'error')}};$('#logout').onclick=async()=>{try{await fetch(C.url+'/auth/v1/logout',{method:'POST',headers:{apikey:C.key,Authorization:'Bearer '+S.session.access_token}})}catch{}clearSession();renderAuth()};
+}
+let recoveringAccess=false;
+async function recoverAccessAndRender(){
+ if(recoveringAccess)return;
+ recoveringAccess=true;
+ try{
+  if(!S.session||!S.user){const ok=await session();if(!ok){renderAuth();return}}
+  await resolveAccess(true);
+  render();
+ }catch(e){toast(e instanceof Error?e.message:'Não foi possível validar o acesso.','error');clearSession();renderAuth()}
+ finally{recoveringAccess=false}
 }
 let globalNavigationBound=false;
 function bindGlobalNavigation(){
@@ -601,7 +661,7 @@ function bindGlobalNavigation(){
   if(!page)return;
   e.preventDefault();
   e.stopPropagation();
-  go(page);
+  void navigateTo(page);
  });
 }
 async function boot(){bindGlobalNavigation();document.getElementById('app').innerHTML='<div class="loading"><div><div class="spinner"></div><p>A abrir o Vigia Cloud…</p></div></div>';if(!await session()){renderAuth();return}try{await resolveAccess();await load();render()}catch(e){clearSession();renderAuth();setTimeout(()=>{const m=$('#authmsg');if(m){m.className='auth-status error';m.textContent=e.message}},0)}}
