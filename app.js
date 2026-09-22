@@ -529,9 +529,9 @@ function renderMain(){
  host.innerHTML=roleBanner()+html;bindPage(k);
 }
 function bindPage(k){
- $('[data-page]').forEach(b=>b.onclick=()=>go(b.dataset.page));
- if(k){$('#search')?.addEventListener('input',e=>{S.search=e.target.value;renderMain()});$('#filter')?.addEventListener('change',e=>{S.filter=e.target.value;renderMain()});$('#add')?.addEventListener('click',()=>editor(k));$('#emptyadd')?.addEventListener('click',()=>editor(k));$('.edit').forEach(b=>b.onclick=()=>editor(k,b.dataset.id));$('.del').forEach(b=>b.onclick=()=>remove(k,b.dataset.id))}
- $('#export')?.addEventListener('click',exportData);$('#import')?.addEventListener('click',importData);$('.price-edit,.lic-edit').forEach(b=>b.onclick=()=>editor('resellers',b.dataset.id));$('.jump').forEach(b=>b.onclick=()=>go(b.dataset.page));bindBrand();bindCalc();bindUsers();bindImou();bindEvents();
+ $$('[data-page]').forEach(b=>b.onclick=()=>go(b.dataset.page));
+ if(k){$('#search')?.addEventListener('input',e=>{S.search=e.target.value;renderMain()});$('#filter')?.addEventListener('change',e=>{S.filter=e.target.value;renderMain()});$('#add')?.addEventListener('click',()=>editor(k));$('#emptyadd')?.addEventListener('click',()=>editor(k));$$('.edit').forEach(b=>b.onclick=()=>editor(k,b.dataset.id));$$('.del').forEach(b=>b.onclick=()=>remove(k,b.dataset.id))}
+ $('#export')?.addEventListener('click',exportData);$('#import')?.addEventListener('click',importData);$$('.price-edit,.lic-edit').forEach(b=>b.onclick=()=>editor('resellers',b.dataset.id));$$('.jump').forEach(b=>b.onclick=()=>go(b.dataset.page));bindBrand();bindCalc();bindUsers();bindImou();bindEvents();
 }
 async function uploadBrandLogo(resellerId,file){
  if(!file)return '';
