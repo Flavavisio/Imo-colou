@@ -8,7 +8,7 @@ const C={
  store:'vigia_session_v2'
 };
 const EMPTY={cameraPlans:[],plans:[],resellers:[],clients:[],locations:[],cameras:[]};
-const S={session:null,user:null,access:null,imou:{appId:'',secret:'',region:'eu',page:1,result:null,selected:'',channel:'0',target:''},ws:{records:structuredClone(EMPTY),revision:0,activity:[]},hasSnapshot:false,page:'Visão geral',search:'',filter:'all',side:false};
+const S={session:null,user:null,access:null,events:[],imou:{appId:'',secret:'',region:'eu',resellerId:'',page:1,result:null,selected:'',channel:'0',target:'',callbackConfigured:null,callbackFor:''},ws:{records:structuredClone(EMPTY),revision:0,activity:[]},hasSnapshot:false,page:'Visão geral',search:'',filter:'all',side:false};
 const NAV=[['Visão geral','▦'],['Revendedores','▣'],['Clientes','◉'],['Utilizadores','◎'],['Instalações','⌖'],['Câmaras','◉'],['Ligações','↔'],['Planos','◇'],['Planos por câmara','◇'],['Carteiras e preços','▤'],['Licenças','□'],['Alertas','!'],['Eventos','▶'],['Marca própria','●'],['Armazenamento','▥']];
 const KIND={'Revendedores':'resellers','Clientes':'clients','Instalações':'locations','Câmaras':'cameras','Planos':'plans','Planos por câmara':'cameraPlans'};
 const LABEL={resellers:'revendedor',clients:'cliente',locations:'instalação',cameras:'câmara',plans:'plano',cameraPlans:'plano por câmara'};
@@ -22,7 +22,7 @@ const icon=n=>({shield:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColo
 
 function toast(text,type=''){let box=$('.toasts');if(!box){box=document.createElement('div');box.className='toasts';document.body.appendChild(box)}const t=document.createElement('div');t.className='toast '+type;t.textContent=text;box.appendChild(t);setTimeout(()=>t.remove(),3500)}
 function storeSession(x){S.session=x;localStorage.setItem(C.store,JSON.stringify(x))}
-function clearSession(){S.session=null;S.user=null;S.access=null;S.imou={appId:'',secret:'',region:'eu',page:1,result:null,selected:'',channel:'0',target:''};localStorage.removeItem(C.store)}
+function clearSession(){S.session=null;S.user=null;S.access=null;S.events=[];S.imou={appId:'',secret:'',region:'eu',resellerId:'',page:1,result:null,selected:'',channel:'0',target:'',callbackConfigured:null,callbackFor:''};localStorage.removeItem(C.store)}
 function getStored(){try{return JSON.parse(localStorage.getItem(C.store)||'null')}catch{return null}}
 
 async function auth(path,opt={}){
@@ -109,7 +109,7 @@ async function table(path){
  return j;
 }
 async function load(){
- const [plans,cameraPlans,resellers,prices,clients,locations,cameras,activity]=await Promise.all([
+ const [plans,cameraPlans,resellers,prices,clients,locations,cameras,activity,events]=await Promise.all([
   table('plans?select=*&order=created_at.asc'),
   table('camera_plans?select=*&order=created_at.asc'),
   table('resellers?select=*&order=created_at.asc'),
@@ -117,7 +117,8 @@ async function load(){
   table('clients?select=*&order=created_at.asc'),
   table('installations?select=*&order=created_at.asc'),
   table('cameras?select=*&order=created_at.asc'),
-  table('activity_log?select=id,reseller_id,entity_type,entity_id,action,detail,created_at&order=created_at.desc&limit=80')
+  table('activity_log?select=id,reseller_id,entity_type,entity_id,action,detail,created_at&order=created_at.desc&limit=80'),
+  table('events?select=id,reseller_id,client_id,installation_id,camera_id,event_type,provider,provider_event_id,occurred_at,received_at,status,clip_path,thumbnail_path,clip_seconds,metadata&order=occurred_at.desc&limit=200')
  ]);
  const saleByReseller={};
  for(const p of prices)(saleByReseller[p.reseller_id]??={})[p.camera_plan_id]=Number(p.price||0);
@@ -127,10 +128,10 @@ async function load(){
   resellers:resellers.map(x=>({id:x.id,name:x.name,status:x.status,email:x.email||'',phone:x.phone||'',planId:x.plan_id||'',brand:x.brand||x.name,color:x.color||x.primary_color||'#2563eb',support:x.support||'',logoId:x.logo_id||'',walletLimit:x.wallet_limit===null?null:Number(x.wallet_limit),licenseMode:x.license_mode||'paid',validUntil:x.valid_until||'',trialCameraLimit:Number(x.trial_camera_limit||2),salePrices:saleByReseller[x.id]||{},slug:x.slug||'',logoUrl:x.logo_url||''})),
   clients:clients.map(x=>({id:x.id,name:x.name,status:x.status,email:x.email||'',phone:x.phone||'',resellerId:x.reseller_id,code:x.code||''})),
   locations:locations.map(x=>({id:x.id,name:x.name,status:x.status,clientId:x.client_id,address:x.address||'',postalCode:x.postal_code||'',city:x.city||'',country:x.country||'PT'})),
-  cameras:cameras.map(x=>({id:x.id,name:x.name,status:x.status,locationId:x.installation_id,manufacturer:x.manufacturer||'',model:x.model||'',codec:x.codec||'auto',eventType:x.event_type||'motion',notes:x.notes||'',cameraPlanId:x.camera_plan_id||'',salePrice:x.sale_price===null?null:Number(x.sale_price),imouDeviceId:x.external_device_id||'',imouChannelId:x.external_channel_id||'0',connectionMode:x.connection_mode||'imou',localHost:x.local_host||'',rtspPort:Number(x.rtsp_port||554),rtspPath:x.rtsp_path||'',localTest:x.local_test||null}))
+  cameras:cameras.map(x=>({id:x.id,name:x.name,status:x.status,locationId:x.installation_id,manufacturer:x.manufacturer||'',model:x.model||'',codec:x.codec||'auto',eventType:x.event_type||'motion',notes:x.notes||'',cameraPlanId:x.camera_plan_id||'',salePrice:x.sale_price===null?null:Number(x.sale_price),imouDeviceId:x.external_device_id||'',imouChannelId:x.external_channel_id||'0',connectionMode:x.connection_mode||'imou',localHost:x.local_host||'',rtspPort:Number(x.rtsp_port||554),rtspPath:x.rtsp_path||'',localTest:x.local_test||null,onlineStatus:x.online_status||'unknown',providerStatusAt:x.provider_status_at||'',lastEventAt:x.last_event_at||''}))
  };
  S.hasSnapshot=false;
- S.ws={records,revision:0,activity:activity.map(a=>({at:a.created_at,text:a.detail||((a.entity_type||'registo')+': '+(a.action||'alterado'))}))};
+ S.events=events;S.ws={records,revision:0,activity:activity.map(a=>({at:a.created_at,text:a.detail||((a.entity_type||'registo')+': '+(a.action||'alterado'))}))};
 }
 function diff(before,after){
  const names={cameraPlans:'planos por câmara',plans:'planos',resellers:'revendedores',clients:'clientes',locations:'instalações',cameras:'câmaras'},out=[];
@@ -275,7 +276,7 @@ function overview(){
  '<div class="grid-2"><section class="card"><div class="card-head"><div><h2>'+(platform?'Configurar a operação':'Acesso rápido')+'</h2><p>Fluxo recomendado.</p></div></div><div class="steps">'+(platform?[['01','Definir planos','Retenção, capacidade e preço.','Planos'],['02','Criar revendedores','Marca, licença e carteira.','Revendedores'],['03','Organizar instalações','Clientes, locais e câmaras.','Instalações']]:S.access?.type==='reseller'?[['01','Gerir clientes','Clientes associados ao teu espaço.','Clientes'],['02','Gerir instalações','Locais e câmaras do revendedor.','Instalações'],['03','Gerir câmaras','Equipamentos e ligações.','Câmaras']]:[['01','Ver instalações','Locais associados à tua conta.','Instalações'],['02','Ver câmaras','Equipamentos disponíveis.','Câmaras'],['03','Consultar eventos','Eventos do teu espaço.','Eventos']]).map(x=>'<button class="step" data-page="'+x[3]+'"><span class="step-num">'+x[0]+'</span><span class="step-copy"><strong>'+x[1]+'</strong><span>'+x[2]+'</span></span><span>→</span></button>').join('')+'</div></section><section class="dark-card"><span class="metric-icon">'+icon('cloud')+'</span><h2>Estrutura pronta para gravação por eventos.</h2><p>A gestão está em HTML, CSS e JavaScript puro. A receção automática de eventos e clips entra na próxima fase.</p><button class="btn" data-page="Câmaras">Gerir câmaras →</button></section></div>'+
  '<section class="card" style="margin-top:20px"><div class="card-head"><div><h2>Atividade recente</h2><p>Alterações guardadas no Supabase.</p></div></div>'+(S.ws.activity.length?S.ws.activity.slice(0,8).map(a=>'<div class="activity-row"><span>'+esc(a.text)+'</span><time>'+esc(dt(a.at))+'</time></div>').join(''):'<div class="empty"><p>Ainda não existem alterações registadas.</p></div>')+'</section>';
 }
-function parent(k,r,d){if(k==='clients')return d.resellers.find(x=>x.id===r.resellerId)?.name||'—';if(k==='locations')return d.clients.find(x=>x.id===r.clientId)?.name||'—';if(k==='cameras')return d.locations.find(x=>x.id===r.locationId)?.name||'—';if(k==='resellers')return d.plans.find(x=>x.id===r.planId)?.name||'Sem plano';if(k==='plans')return r.retention+' dias · '+r.cameraLimit+' câmaras';if(k==='cameraPlans')return r.retention+' dias · '+r.maxResolution;return ''}
+function parent(k,r,d){if(k==='clients')return d.resellers.find(x=>x.id===r.resellerId)?.name||'—';if(k==='locations')return d.clients.find(x=>x.id===r.clientId)?.name||'—';if(k==='cameras'){const loc=d.locations.find(x=>x.id===r.locationId)?.name||'—',st=r.onlineStatus==='online'?'Online':r.onlineStatus==='offline'?'Offline':'Estado desconhecido';return loc+' · '+st;}if(k==='resellers')return d.plans.find(x=>x.id===r.planId)?.name||'Sem plano';if(k==='plans')return r.retention+' dias · '+r.cameraLimit+' câmaras';if(k==='cameraPlans')return r.retention+' dias · '+r.maxResolution;return ''}
 function directory(k,title){
  const d=S.ws.records,can=canMutate(k),rows=d[k].filter(r=>(S.filter==='all'||r.status===S.filter)&&(r.name+' '+parent(k,r,d)+' '+(r.email||'')).toLowerCase().includes(S.search.toLowerCase()));
  const desktop=rows.map(r=>{
