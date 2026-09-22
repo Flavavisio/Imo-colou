@@ -95,14 +95,14 @@ Deno.serve(async(req)=>{
     }
 
     let {data:cameras}=await admin.from("cameras")
-      .select("id,reseller_id,client_id,installation_id")
+      .select("id,reseller_id,client_id,installation_id,camera_plan_id")
       .eq("reseller_id",config.reseller_id)
       .eq("external_device_id",deviceId)
       .eq("external_channel_id",channelId||"0")
       .limit(2);
     if(!cameras?.length){
       const fallback=await admin.from("cameras")
-        .select("id,reseller_id,client_id,installation_id")
+        .select("id,reseller_id,client_id,installation_id,camera_plan_id")
         .eq("reseller_id",config.reseller_id)
         .eq("external_device_id",deviceId)
         .limit(2);
@@ -138,7 +138,7 @@ Deno.serve(async(req)=>{
       provider:"imou",
       provider_event_id:providerEventId,
       occurred_at:at,
-      status:"metadata_only",
+      status:"clip_pending",
       metadata,
     });
     if(eventError)return json({ok:false},500);
@@ -147,8 +147,25 @@ Deno.serve(async(req)=>{
     if(recordToken){
       await admin.from("imou_event_tokens").insert({event_id:eventId,record_token:recordToken});
     }
+
+    let clipSeconds=30;
+    if(camera.camera_plan_id){
+      const {data:planRows}=await admin.from("camera_plans").select("max_clip_seconds").eq("id",camera.camera_plan_id).limit(1);
+      if(planRows?.length)clipSeconds=Math.max(5,Math.min(120,Number(planRows[0].max_clip_seconds||30)));
+    }
+    const {error:jobError}=await admin.from("clip_jobs").insert({
+      event_id:eventId,
+      reseller_id:camera.reseller_id,
+      camera_id:camera.id,
+      clip_seconds:clipSeconds,
+      status:"pending",
+    });
+    if(jobError){
+      await admin.from("events").update({status:"metadata_only"}).eq("id",eventId);
+    }
+
     await admin.from("cameras").update({last_event_at:at,online_status:"online",provider_status_at:new Date().toISOString()}).eq("id",camera.id);
-    return json({ok:true,matched:true});
+    return json({ok:true,matched:true,clipQueued:!jobError});
   }catch{
     return json({ok:false},500);
   }
