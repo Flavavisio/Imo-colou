@@ -8,7 +8,7 @@ const C={
  store:'vigia_session_v2'
 };
 const EMPTY={cameraPlans:[],plans:[],resellers:[],clients:[],locations:[],cameras:[]};
-const S={session:null,user:null,ws:{records:structuredClone(EMPTY),revision:0,activity:[]},hasSnapshot:false,page:'Visão geral',search:'',filter:'all',side:false};
+const S={session:null,user:null,access:null,ws:{records:structuredClone(EMPTY),revision:0,activity:[]},hasSnapshot:false,page:'Visão geral',search:'',filter:'all',side:false};
 const NAV=[['Visão geral','▦'],['Revendedores','▣'],['Clientes','◉'],['Instalações','⌖'],['Câmaras','◉'],['Ligações','↔'],['Planos','◇'],['Planos por câmara','◇'],['Carteiras e preços','▤'],['Licenças','□'],['Alertas','!'],['Eventos','▶'],['Marca própria','●'],['Armazenamento','▥']];
 const KIND={'Revendedores':'resellers','Clientes':'clients','Instalações':'locations','Câmaras':'cameras','Planos':'plans','Planos por câmara':'cameraPlans'};
 const LABEL={resellers:'revendedor',clients:'cliente',locations:'instalação',cameras:'câmara',plans:'plano',cameraPlans:'plano por câmara'};
@@ -44,7 +44,49 @@ async function rest(path,opt={}){
  if(r.status===401){await refresh();headers.Authorization='Bearer '+S.session.access_token;r=await fetch(C.url+'/rest/v1/'+path,{...opt,headers})}
  return r;
 }
-async function assertAdmin(){const r=await rest('platform_admins?user_id=eq.'+encodeURIComponent(S.user.id)+'&select=user_id');const j=await r.json();if(!r.ok||!j.length)throw Error('Esta conta não tem permissões de Super Admin.')}
+async function readAccess(path){
+ const r=await rest(path),j=await r.json().catch(()=>[]);
+ if(!r.ok)throw Error(j.message||j.hint||'Não foi possível validar as permissões.');
+ return j;
+}
+async function resolveAccess(){
+ const uid=encodeURIComponent(S.user.id);
+ const pa=await readAccess('platform_admins?user_id=eq.'+uid+'&select=user_id');
+ if(pa.length){S.access={type:'platform',role:'super_admin'};return S.access}
+ const rm=await readAccess('reseller_members?user_id=eq.'+uid+'&select=reseller_id,role,created_at&order=created_at.asc');
+ if(rm.length){
+  const rank={owner:0,admin:1,operator:2,viewer:3};rm.sort((a,b)=>(rank[a.role]??9)-(rank[b.role]??9));
+  S.access={type:'reseller',role:rm[0].role,resellerId:rm[0].reseller_id};return S.access;
+ }
+ const cm=await readAccess('client_members?user_id=eq.'+uid+'&select=client_id,reseller_id,role,created_at&order=created_at.asc');
+ if(cm.length){
+  const rank={owner:0,admin:1,viewer:2};cm.sort((a,b)=>(rank[a.role]??9)-(rank[b.role]??9));
+  S.access={type:'client',role:cm[0].role,clientId:cm[0].client_id,resellerId:cm[0].reseller_id};return S.access;
+ }
+ throw Error('A conta está ativa, mas ainda não foi associada a um Revendedor ou Cliente.');
+}
+function accessLabel(){
+ if(S.access?.type==='platform')return 'SUPER ADMIN';
+ if(S.access?.type==='reseller')return 'REVENDEDOR · '+String(S.access.role||'').toUpperCase();
+ if(S.access?.type==='client')return 'CLIENTE';
+ return 'UTILIZADOR';
+}
+function navForAccess(){
+ if(S.access?.type==='platform')return NAV;
+ const allowed=S.access?.type==='reseller'
+  ? new Set(['Visão geral','Clientes','Instalações','Câmaras','Ligações','Carteiras e preços','Licenças','Alertas','Eventos','Marca própria','Armazenamento'])
+  : new Set(['Visão geral','Instalações','Câmaras','Alertas','Eventos','Armazenamento']);
+ return NAV.filter(([name])=>allowed.has(name));
+}
+function canMutate(kind){
+ if(S.access?.type==='platform')return true;
+ if(S.access?.type==='reseller'){
+  if(['owner','admin'].includes(S.access.role))return ['resellers','clients','locations','cameras'].includes(kind);
+  if(S.access.role==='operator')return ['locations','cameras'].includes(kind);
+ }
+ return false;
+}
+function canManageUsers(){return S.access?.type==='platform'||(S.access?.type==='reseller'&&['owner','admin'].includes(S.access.role));}
 const n=v=>v===null||v===undefined||v===''?null:Number(v);
 const slugify=v=>String(v||'revendedor').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,42)||'revendedor';
 async function table(path){
@@ -152,7 +194,9 @@ async function writeActivity(changes,before,after){
 }
 async function save(records,msg='Alterações guardadas.'){
  validate(records);
- const before=S.ws.records,changes=diff(before,records),changedByKind={};
+ const before=S.ws.records,changes=diff(before,records),forbidden=changes.find(ch=>!canMutate(ch.kind));
+ if(forbidden)throw Error('O teu perfil não tem permissão para alterar '+LABEL[forbidden.kind]+'.');
+ const changedByKind={};
  for(const k of Object.keys(EMPTY)){const b=new Map(before[k].map(x=>[x.id,JSON.stringify(x)]));changedByKind[k]=records[k].filter(x=>!b.has(x.id)||b.get(x.id)!==JSON.stringify(x))}
  const removed={};for(const k of Object.keys(EMPTY)){const a=new Set(records[k].map(x=>x.id));removed[k]=before[k].filter(x=>!a.has(x.id)).map(x=>x.id)}
  try{
@@ -177,28 +221,30 @@ async function save(records,msg='Alterações guardadas.'){
 
 function logo(){return '<span class="brand-mark">'+icon('shield')+'</span><div class="brand-copy"><strong>vigia<span>cloud</span></strong><small>VIDEOVIGILÂNCIA POR EVENTOS</small></div>'}
 function badge(status){return '<span class="badge '+(status==='active'?'green':'amber')+'">'+(status==='active'?'Ativo':'Suspenso')+'</span>'}
-function heading(title,sub,actions=''){return '<div class="heading"><div><p class="eyebrow">SUPER ADMIN</p><h1>'+esc(title)+'</h1><p>'+esc(sub)+'</p></div><div class="heading-actions">'+actions+'</div></div>'}
+function heading(title,sub,actions=''){return '<div class="heading"><div><p class="eyebrow">'+esc(accessLabel())+'</p><h1>'+esc(title)+'</h1><p>'+esc(sub)+'</p></div><div class="heading-actions">'+actions+'</div></div>'}
 
 function renderAuth(){
  document.getElementById('app').innerHTML='<div class="auth"><section class="auth-hero"><div class="brand">'+logo()+'</div><div class="auth-main"><div class="kicker">PLATAFORMA WHITE LABEL</div><h1>Videovigilância cloud, organizada por eventos.</h1><p>Revendedores, clientes, instalações, câmaras, licenças e preços numa interface simples e profissional.</p><div class="auth-points"><div class="auth-point"><strong>Multi-tenant</strong><small>Operação organizada por empresa</small></div><div class="auth-point"><strong>White label</strong><small>Marca e preços personalizados</small></div><div class="auth-point"><strong>Supabase</strong><small>Login e isolamento RLS</small></div></div></div><small>Vigia Cloud · HTML + CSS + JavaScript</small></section><section class="auth-side"><div class="auth-card"><h2>Iniciar sessão</h2><p>Acede ao teu espaço privado.</p><form id="login" class="auth-form"><div class="field"><label>Email</label><input id="email" class="input" type="email" value="'+esc(C.admin)+'" autocomplete="email" required></div><div class="field"><label>Palavra-passe</label><input id="pass" class="input" type="password" autocomplete="current-password" required></div><div id="authmsg"></div><div class="auth-actions"><button class="btn btn-primary">Entrar no Vigia Cloud</button><button id="recover" type="button" class="link-btn">Recuperar palavra-passe</button></div></form></div></section></div>';
- $('#login').onsubmit=async e=>{e.preventDefault();const b=e.submitter,m=$('#authmsg');b.disabled=true;b.textContent='A validar…';m.innerHTML='';try{await login($('#email').value.trim(),$('#pass').value);await session();await assertAdmin();await load();render()}catch(x){clearSession();m.className='auth-status error';m.textContent=x.message;b.disabled=false;b.textContent='Entrar no Vigia Cloud'}};
+ $('#login').onsubmit=async e=>{e.preventDefault();const b=e.submitter,m=$('#authmsg');b.disabled=true;b.textContent='A validar…';m.innerHTML='';try{await login($('#email').value.trim(),$('#pass').value);await session();await resolveAccess();await load();render()}catch(x){clearSession();m.className='auth-status error';m.textContent=x.message;b.disabled=false;b.textContent='Entrar no Vigia Cloud'}};
  $('#recover').onclick=async()=>{const m=$('#authmsg');try{await auth('/recover',{method:'POST',body:JSON.stringify({email:$('#email').value.trim()})});m.className='auth-status ok';m.textContent='Email de recuperação enviado.'}catch(x){m.className='auth-status error';m.textContent=x.message}};
 }
-function sidebar(){return '<aside class="sidebar '+(S.side?'open':'')+'"><div class="brand">'+logo()+'</div><div class="nav-label">PLATAFORMA</div><nav class="nav">'+NAV.map(([n,i])=>'<button class="nav-btn '+(S.page===n?'active':'')+'" data-page="'+esc(n)+'"><span>'+esc(i)+'</span><span>'+esc(n)+'</span></button>').join('')+'</nav><div class="sidebar-foot"><div class="user"><span class="avatar">'+esc((S.user?.email||'V')[0].toUpperCase())+'</span><div><strong>'+esc(S.user?.email||'')+'</strong><small>Super Admin</small></div></div><button class="logout" id="logout">Terminar sessão</button></div></aside>'}
+function sidebar(){return '<aside class="sidebar '+(S.side?'open':'')+'"><div class="brand">'+logo()+'</div><div class="nav-label">'+esc(S.access?.type==='platform'?'PLATAFORMA':S.access?.type==='reseller'?'PORTAL REVENDEDOR':'PORTAL CLIENTE')+'</div><nav class="nav">'+navForAccess().map(([n,i])=>'<button class="nav-btn '+(S.page===n?'active':'')+'" data-page="'+esc(n)+'"><span>'+esc(i)+'</span><span>'+esc(n)+'</span></button>').join('')+'</nav><div class="sidebar-foot"><div class="user"><span class="avatar">'+esc((S.user?.email||'V')[0].toUpperCase())+'</span><div><strong>'+esc(S.user?.email||'')+'</strong><small>'+esc(accessLabel())+'</small></div></div><button class="logout" id="logout">Terminar sessão</button></div></aside>'}
 function topbar(){return '<header class="topbar"><div class="crumbs"><button id="menu" class="icon-btn mobile-menu">'+icon('menu')+'</button><span>Vigia Cloud</span><span>/</span><strong>'+esc(S.page)+'</strong></div><div class="top-actions"><span class="sync">Supabase ligado</span><button id="reload" class="btn btn-ghost">'+icon('refresh')+'<span>Atualizar</span></button></div></header>'}
 
 function overview(){
- const d=S.ws.records,alerts=makeAlerts(d);
- return heading('A tua operação, num só lugar.','Configura o serviço do revendedor à câmara.','<button id="import" class="btn btn-ghost">'+icon('upload')+'Importar</button><button id="export" class="btn btn-ghost">'+icon('download')+'Exportar</button>')+
- '<section class="metrics">'+[['Revendedores',d.resellers.length],['Clientes',d.clients.length],['Câmaras',d.cameras.length],['Alertas',alerts.length]].map(([a,b])=>'<div class="metric"><div class="metric-head"><span>'+a+'</span><span class="metric-icon">'+(a==='Câmaras'?icon('camera'):icon('db'))+'</span></div><strong>'+b+'</strong><small>Registos na plataforma</small></div>').join('')+'</section>'+
- '<div class="grid-2"><section class="card"><div class="card-head"><div><h2>Configurar a operação</h2><p>Fluxo recomendado.</p></div></div><div class="steps">'+[['01','Definir planos','Retenção, capacidade e preço.','Planos'],['02','Criar revendedores','Marca, licença e carteira.','Revendedores'],['03','Organizar instalações','Clientes, locais e câmaras.','Instalações']].map(x=>'<button class="step" data-page="'+x[3]+'"><span class="step-num">'+x[0]+'</span><span class="step-copy"><strong>'+x[1]+'</strong><span>'+x[2]+'</span></span><span>→</span></button>').join('')+'</div></section><section class="dark-card"><span class="metric-icon">'+icon('cloud')+'</span><h2>Estrutura pronta para gravação por eventos.</h2><p>A gestão está em HTML, CSS e JavaScript puro. A receção automática de eventos e clips entra na próxima fase.</p><button class="btn" data-page="Câmaras">Gerir câmaras →</button></section></div>'+
+ const d=S.ws.records,alerts=makeAlerts(d),platform=S.access?.type==='platform';
+ const actions=platform?'<button id="import" class="btn btn-ghost">'+icon('upload')+'Importar</button><button id="export" class="btn btn-ghost">'+icon('download')+'Exportar</button>':'';
+ const metrics=platform?[['Revendedores',d.resellers.length],['Clientes',d.clients.length],['Câmaras',d.cameras.length],['Alertas',alerts.length]]:[['Clientes',d.clients.length],['Instalações',d.locations.length],['Câmaras',d.cameras.length],['Alertas',alerts.length]];
+ return heading('A tua operação, num só lugar.',platform?'Configura o serviço do revendedor à câmara.':'Consulta e gere apenas o teu espaço.',actions)+
+ '<section class="metrics">'+metrics.map(([a,b])=>'<div class="metric"><div class="metric-head"><span>'+a+'</span><span class="metric-icon">'+(a==='Câmaras'?icon('camera'):icon('db'))+'</span></div><strong>'+b+'</strong><small>Registos na plataforma</small></div>').join('')+'</section>'+
+ '<div class="grid-2"><section class="card"><div class="card-head"><div><h2>'+(platform?'Configurar a operação':'Acesso rápido')+'</h2><p>Fluxo recomendado.</p></div></div><div class="steps">'+(platform?[['01','Definir planos','Retenção, capacidade e preço.','Planos'],['02','Criar revendedores','Marca, licença e carteira.','Revendedores'],['03','Organizar instalações','Clientes, locais e câmaras.','Instalações']]:S.access?.type==='reseller'?[['01','Gerir clientes','Clientes associados ao teu espaço.','Clientes'],['02','Gerir instalações','Locais e câmaras do revendedor.','Instalações'],['03','Gerir câmaras','Equipamentos e ligações.','Câmaras']]:[['01','Ver instalações','Locais associados à tua conta.','Instalações'],['02','Ver câmaras','Equipamentos disponíveis.','Câmaras'],['03','Consultar eventos','Eventos do teu espaço.','Eventos']]).map(x=>'<button class="step" data-page="'+x[3]+'"><span class="step-num">'+x[0]+'</span><span class="step-copy"><strong>'+x[1]+'</strong><span>'+x[2]+'</span></span><span>→</span></button>').join('')+'</div></section><section class="dark-card"><span class="metric-icon">'+icon('cloud')+'</span><h2>Estrutura pronta para gravação por eventos.</h2><p>A gestão está em HTML, CSS e JavaScript puro. A receção automática de eventos e clips entra na próxima fase.</p><button class="btn" data-page="Câmaras">Gerir câmaras →</button></section></div>'+
  '<section class="card" style="margin-top:20px"><div class="card-head"><div><h2>Atividade recente</h2><p>Alterações guardadas no Supabase.</p></div></div>'+(S.ws.activity.length?S.ws.activity.slice(0,8).map(a=>'<div class="activity-row"><span>'+esc(a.text)+'</span><time>'+esc(dt(a.at))+'</time></div>').join(''):'<div class="empty"><p>Ainda não existem alterações registadas.</p></div>')+'</section>';
 }
 function parent(k,r,d){if(k==='clients')return d.resellers.find(x=>x.id===r.resellerId)?.name||'—';if(k==='locations')return d.clients.find(x=>x.id===r.clientId)?.name||'—';if(k==='cameras')return d.locations.find(x=>x.id===r.locationId)?.name||'—';if(k==='resellers')return d.plans.find(x=>x.id===r.planId)?.name||'Sem plano';if(k==='plans')return r.retention+' dias · '+r.cameraLimit+' câmaras';if(k==='cameraPlans')return r.retention+' dias · '+r.maxResolution;return ''}
 function directory(k,title){
- const d=S.ws.records,rows=d[k].filter(r=>(S.filter==='all'||r.status===S.filter)&&(r.name+' '+parent(k,r,d)+' '+(r.email||'')).toLowerCase().includes(S.search.toLowerCase()));
- const body=rows.length?'<div class="table-wrap"><table class="table"><thead><tr><th>Nome</th><th>Associação / detalhe</th><th>Estado</th><th>Contacto</th><th></th></tr></thead><tbody>'+rows.map(r=>'<tr><td><strong>'+esc(r.name)+'</strong><span class="sub">'+esc(r.id.slice(0,8))+'</span></td><td>'+esc(parent(k,r,d))+'</td><td>'+badge(r.status)+'</td><td>'+esc(r.email||'—')+'<span class="sub">'+esc(r.phone||'')+'</span></td><td><div class="actions"><button class="icon-btn edit" data-id="'+r.id+'">'+icon('edit')+'</button><button class="icon-btn del" data-id="'+r.id+'">'+icon('trash')+'</button></div></td></tr>').join('')+'</tbody></table></div><div class="mobile-cards">'+rows.map(r=>'<div class="mobile-row"><div class="mobile-row-head"><div><h3>'+esc(r.name)+'</h3><p>'+esc(parent(k,r,d))+'</p></div>'+badge(r.status)+'</div><div class="actions"><button class="btn btn-ghost edit" data-id="'+r.id+'">Editar</button><button class="btn btn-danger del" data-id="'+r.id+'">Eliminar</button></div></div>').join('')+'</div>':'<div class="empty"><div class="empty-icon">'+icon('db')+'</div><h3>Sem registos</h3><p>Cria o primeiro '+LABEL[k]+' para começar.</p><button id="emptyadd" class="btn btn-primary">'+icon('plus')+'Criar agora</button></div>';
- return heading(title,'Organiza e mantém os registos da plataforma.','<button id="add" class="btn btn-primary">'+icon('plus')+'Novo '+LABEL[k]+'</button>')+'<section class="card"><div class="toolbar"><div class="toolbar-left"><div class="search">'+icon('search')+'<input id="search" class="input" value="'+esc(S.search)+'" placeholder="Pesquisar…"></div><select id="filter" class="select filter"><option value="all">Todos</option><option value="active" '+(S.filter==='active'?'selected':'')+'>Ativos</option><option value="paused" '+(S.filter==='paused'?'selected':'')+'>Suspensos</option></select></div><span class="badge">'+rows.length+' registos</span></div>'+body+'</section>';
+ const d=S.ws.records,can=canMutate(k),rows=d[k].filter(r=>(S.filter==='all'||r.status===S.filter)&&(r.name+' '+parent(k,r,d)+' '+(r.email||'')).toLowerCase().includes(S.search.toLowerCase()));
+ const body=rows.length?'<div class="table-wrap"><table class="table"><thead><tr><th>Nome</th><th>Associação / detalhe</th><th>Estado</th><th>Contacto</th><th></th></tr></thead><tbody>'+rows.map(r=>'<tr><td><strong>'+esc(r.name)+'</strong><span class="sub">'+esc(r.id.slice(0,8))+'</span></td><td>'+esc(parent(k,r,d))+'</td><td>'+badge(r.status)+'</td><td>'+esc(r.email||'—')+'<span class="sub">'+esc(r.phone||'')+'</span></td><td><div class="actions"><button class="icon-btn edit" data-id="'+r.id+'">'+icon('edit')+'</button><button class="icon-btn del" data-id="'+r.id+'">'+icon('trash')+'</button></div></td></tr>').join('')+'</tbody></table></div><div class="mobile-cards">'+rows.map(r=>'<div class="mobile-row"><div class="mobile-row-head"><div><h3>'+esc(r.name)+'</h3><p>'+esc(parent(k,r,d))+'</p></div>'+badge(r.status)+'</div><div class="actions"><button class="btn btn-ghost edit" data-id="'+r.id+'">Editar</button><button class="btn btn-danger del" data-id="'+r.id+'">Eliminar</button></div></div>').join('')+'</div>:'<div class="empty"><div class="empty-icon">'+icon('db')+'</div><h3>Sem registos</h3><p>'+(can?'Cria o primeiro '+LABEL[k]+' para começar.':'Ainda não existem registos disponíveis.')+'</p>'+(can?'<button id="emptyadd" class="btn btn-primary">'+icon('plus')+'Criar agora</button>':'')+'</div>';
+ return heading(title,can?'Organiza e mantém os registos da plataforma.':'Consulta os registos disponíveis para a tua conta.',can?'<button id="add" class="btn btn-primary">'+icon('plus')+'Novo '+LABEL[k]+'</button>':'')+'<section class="card"><div class="toolbar"><div class="toolbar-left"><div class="search">'+icon('search')+'<input id="search" class="input" value="'+esc(S.search)+'" placeholder="Pesquisar…"></div><select id="filter" class="select filter"><option value="all">Todos</option><option value="active" '+(S.filter==='active'?'selected':'')+'>Ativos</option><option value="paused" '+(S.filter==='paused'?'selected':'')+'>Suspensos</option></select></div><span class="badge">'+rows.length+' registos</span></div>'+body+'</section>';
 }
 
 const F={
@@ -251,6 +297,6 @@ function render(){
  document.getElementById('app').innerHTML='<div class="shell">'+sidebar()+'<section class="main">'+topbar()+'<main id="content" class="workspace"></main></section></div>';renderMain();
  $$('.nav-btn').forEach(b=>b.onclick=()=>go(b.dataset.page));$('#menu').onclick=()=>{$('.sidebar').classList.toggle('open')};$('#reload').onclick=async()=>{try{await load();toast('Dados atualizados.','success');render()}catch(e){toast(e.message,'error')}};$('#logout').onclick=async()=>{try{await fetch(C.url+'/auth/v1/logout',{method:'POST',headers:{apikey:C.key,Authorization:'Bearer '+S.session.access_token}})}catch{}clearSession();renderAuth()};
 }
-async function boot(){document.getElementById('app').innerHTML='<div class="loading"><div><div class="spinner"></div><p>A abrir o Vigia Cloud…</p></div></div>';if(!await session()){renderAuth();return}try{await assertAdmin();await load();render()}catch(e){clearSession();renderAuth();setTimeout(()=>{const m=$('#authmsg');if(m){m.className='auth-status error';m.textContent=e.message}},0)}}
+async function boot(){document.getElementById('app').innerHTML='<div class="loading"><div><div class="spinner"></div><p>A abrir o Vigia Cloud…</p></div></div>';if(!await session()){renderAuth();return}try{await resolveAccess();await load();render()}catch(e){clearSession();renderAuth();setTimeout(()=>{const m=$('#authmsg');if(m){m.className='auth-status error';m.textContent=e.message}},0)}}
 boot();
 })();
