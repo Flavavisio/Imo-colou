@@ -45,15 +45,46 @@ async function rest(path,opt={}){
  return r;
 }
 async function assertAdmin(){const r=await rest('platform_admins?user_id=eq.'+encodeURIComponent(S.user.id)+'&select=user_id');const j=await r.json();if(!r.ok||!j.length)throw Error('Esta conta não tem permissões de Super Admin.')}
+const n=v=>v===null||v===undefined||v===''?null:Number(v);
+const slugify=v=>String(v||'revendedor').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,42)||'revendedor';
+async function table(path){
+ const r=await rest(path),j=await r.json().catch(()=>[]);
+ if(!r.ok)throw Error(j.message||j.hint||'Erro ao carregar dados do Supabase.');
+ return j;
+}
 async function load(){
- const r=await rest('workspace_snapshots?user_id=eq.'+encodeURIComponent(S.user.id)+'&select=records,activity,revision');
- const j=await r.json();if(!r.ok)throw Error(j.message||'Não foi possível carregar dados.');
- if(!j.length){S.hasSnapshot=false;S.ws={records:structuredClone(EMPTY),revision:0,activity:[]};return}
- S.hasSnapshot=true;S.ws={records:{...structuredClone(EMPTY),...(j[0].records||{})},revision:Number(j[0].revision||0),activity:Array.isArray(j[0].activity)?j[0].activity:[]};
+ const [plans,cameraPlans,resellers,prices,clients,locations,cameras,activity]=await Promise.all([
+  table('plans?select=*&order=created_at.asc'),
+  table('camera_plans?select=*&order=created_at.asc'),
+  table('resellers?select=*&order=created_at.asc'),
+  table('reseller_sale_prices?select=*&order=created_at.asc'),
+  table('clients?select=*&order=created_at.asc'),
+  table('installations?select=*&order=created_at.asc'),
+  table('cameras?select=*&order=created_at.asc'),
+  table('activity_log?select=id,reseller_id,entity_type,entity_id,action,detail,created_at&order=created_at.desc&limit=80')
+ ]);
+ const saleByReseller={};
+ for(const p of prices)(saleByReseller[p.reseller_id]??={})[p.camera_plan_id]=Number(p.price||0);
+ const records={
+  plans:plans.map(x=>({id:x.id,name:x.name,status:x.status,retention:Number(x.retention),cameraLimit:Number(x.camera_limit),price:Number(x.price),original:Boolean(x.original)})),
+  cameraPlans:cameraPlans.map(x=>({id:x.id,name:x.name,status:x.status,retention:Number(x.retention),price:Number(x.price),maxResolution:x.max_resolution,maxClipSeconds:Number(x.max_clip_seconds),monthlyGB:Number(x.monthly_gb),original:Boolean(x.original)})),
+  resellers:resellers.map(x=>({id:x.id,name:x.name,status:x.status,email:x.email||'',phone:x.phone||'',planId:x.plan_id||'',brand:x.brand||x.name,color:x.color||x.primary_color||'#2563eb',support:x.support||'',logoId:x.logo_id||'',walletLimit:x.wallet_limit===null?null:Number(x.wallet_limit),licenseMode:x.license_mode||'paid',validUntil:x.valid_until||'',trialCameraLimit:Number(x.trial_camera_limit||2),salePrices:saleByReseller[x.id]||{},slug:x.slug||'',logoUrl:x.logo_url||''})),
+  clients:clients.map(x=>({id:x.id,name:x.name,status:x.status,email:x.email||'',phone:x.phone||'',resellerId:x.reseller_id,code:x.code||''})),
+  locations:locations.map(x=>({id:x.id,name:x.name,status:x.status,clientId:x.client_id,address:x.address||'',postalCode:x.postal_code||'',city:x.city||'',country:x.country||'PT'})),
+  cameras:cameras.map(x=>({id:x.id,name:x.name,status:x.status,locationId:x.installation_id,manufacturer:x.manufacturer||'',model:x.model||'',codec:x.codec||'auto',eventType:x.event_type||'motion',notes:x.notes||'',cameraPlanId:x.camera_plan_id||'',salePrice:x.sale_price===null?null:Number(x.sale_price),imouDeviceId:x.external_device_id||'',imouChannelId:x.external_channel_id||'0',connectionMode:x.connection_mode||'imou',localHost:x.local_host||'',rtspPort:Number(x.rtsp_port||554),rtspPath:x.rtsp_path||'',localTest:x.local_test||null}))
+ };
+ S.hasSnapshot=false;
+ S.ws={records,revision:0,activity:activity.map(a=>({at:a.created_at,text:a.detail||((a.entity_type||'registo')+': '+(a.action||'alterado'))}))};
 }
 function diff(before,after){
- const names={cameraPlans:'planos por câmara',plans:'planos',resellers:'revendedores',clients:'clientes',locations:'instalações',cameras:'câmaras'},out=[],at=new Date().toISOString();
- Object.keys(names).forEach(k=>{const b=new Map(before[k].map(x=>[x.id,JSON.stringify(x)])),a=new Map(after[k].map(x=>[x.id,JSON.stringify(x)]));const add=after[k].filter(x=>!b.has(x.id)).length,ed=after[k].filter(x=>b.has(x.id)&&b.get(x.id)!==JSON.stringify(x)).length,del=before[k].filter(x=>!a.has(x.id)).length;if(add||ed||del)out.push({at,text:names[k]+': '+add+' criados, '+ed+' alterados, '+del+' eliminados'})});return out;
+ const names={cameraPlans:'planos por câmara',plans:'planos',resellers:'revendedores',clients:'clientes',locations:'instalações',cameras:'câmaras'},out=[];
+ for(const k of Object.keys(names)){
+  const b=new Map(before[k].map(x=>[x.id,JSON.stringify(x)])),a=new Map(after[k].map(x=>[x.id,JSON.stringify(x)]));
+  for(const x of after[k])if(!b.has(x.id))out.push({kind:k,id:x.id,action:'created',detail:names[k]+': '+x.name+' criado'});
+  else if(b.get(x.id)!==JSON.stringify(x))out.push({kind:k,id:x.id,action:'updated',detail:names[k]+': '+x.name+' alterado'});
+  for(const x of before[k])if(!a.has(x.id))out.push({kind:k,id:x.id,action:'deleted',detail:names[k]+': '+x.name+' eliminado'});
+ }
+ return out;
 }
 function validate(d){
  for(const k of Object.keys(EMPTY))if(!Array.isArray(d[k]))throw Error('Estrutura de dados inválida.');
@@ -63,13 +94,85 @@ function validate(d){
  for(const l of d.locations)if(!d.clients.some(c=>c.id===l.clientId))throw Error('Cada instalação precisa de um cliente.');
  for(const c of d.cameras){if(!d.locations.some(l=>l.id===c.locationId))throw Error('Cada câmara precisa de uma instalação.');if(c.connectionMode==='local'&&(!c.localHost||!c.rtspPath))throw Error('Para rede local indica IP e caminho RTSP.');if(c.cameraPlanId&&!d.cameraPlans.some(p=>p.id===c.cameraPlanId))throw Error('Plano de câmara inválido.')}
  const keys=d.cameras.filter(c=>c.connectionMode==='imou'&&c.imouDeviceId).map(c=>c.imouDeviceId+':'+c.imouChannelId);if(new Set(keys).size!==keys.length)throw Error('Device ID + canal Imou já associado.');
+ for(const r of d.resellers){
+  const p=d.plans.find(p=>p.id===r.planId),limit=r.licenseMode==='trial'?Number(r.trialCameraLimit||2):(r.walletLimit??p?.cameraLimit);
+  if(limit===null||limit===undefined)continue;
+  const cs=new Set(d.clients.filter(c=>c.resellerId===r.id).map(c=>c.id)),ls=new Set(d.locations.filter(l=>cs.has(l.clientId)).map(l=>l.id));
+  if(d.cameras.filter(c=>ls.has(c.locationId)).length>Number(limit))throw Error('O revendedor '+r.name+' ultrapassa o limite de '+limit+' câmaras.');
+ }
+}
+function resellerOf(kind,row,records){
+ if(kind==='resellers')return row.id;
+ if(kind==='clients')return row.resellerId;
+ if(kind==='locations')return records.clients.find(c=>c.id===row.clientId)?.resellerId||null;
+ if(kind==='cameras'){const l=records.locations.find(l=>l.id===row.locationId);return records.clients.find(c=>c.id===l?.clientId)?.resellerId||null}
+ return null;
+}
+function toDb(kind,x,records){
+ const stamp=new Date().toISOString();
+ if(kind==='plans')return {id:x.id,name:x.name,status:x.status,retention:Number(x.retention),camera_limit:Number(x.cameraLimit),price:Number(x.price||0),original:Boolean(x.original),updated_at:stamp};
+ if(kind==='cameraPlans')return {id:x.id,name:x.name,status:x.status,retention:Number(x.retention),price:Number(x.price||0),max_resolution:x.maxResolution,max_clip_seconds:Number(x.maxClipSeconds),monthly_gb:Number(x.monthlyGB),original:Boolean(x.original),updated_at:stamp};
+ if(kind==='resellers')return {id:x.id,name:x.name,slug:x.slug||slugify(x.name)+'-'+x.id.slice(0,8),email:x.email||null,phone:x.phone||'',plan_id:x.planId||null,brand:x.brand||x.name,color:x.color||'#2563eb',primary_color:x.color||'#2563eb',secondary_color:null,support:x.support||'',logo_id:x.logoId||null,logo_url:x.logoUrl||null,wallet_limit:x.walletLimit===null||x.walletLimit===''?null:Number(x.walletLimit),license_mode:x.licenseMode||'paid',valid_until:x.validUntil||null,trial_camera_limit:Number(x.trialCameraLimit||2),status:x.status,active:x.status==='active',updated_at:stamp};
+ if(kind==='clients')return {id:x.id,reseller_id:x.resellerId,name:x.name,code:x.code||null,email:x.email||null,phone:x.phone||'',status:x.status,active:x.status==='active',updated_at:stamp};
+ if(kind==='locations'){const cl=records.clients.find(c=>c.id===x.clientId);if(!cl)throw Error('Cliente da instalação não encontrado.');return {id:x.id,reseller_id:cl.resellerId,client_id:x.clientId,name:x.name,address:x.address||null,postal_code:x.postalCode||null,city:x.city||null,country:x.country||'PT',status:x.status,active:x.status==='active',updated_at:stamp}}
+ if(kind==='cameras'){const loc=records.locations.find(l=>l.id===x.locationId),cl=records.clients.find(c=>c.id===loc?.clientId);if(!loc||!cl)throw Error('Hierarquia da câmara inválida.');return {id:x.id,reseller_id:cl.resellerId,client_id:cl.id,installation_id:loc.id,name:x.name,provider:x.connectionMode==='local'?'rtsp':'imou',external_device_id:x.imouDeviceId||null,external_channel_id:x.imouChannelId||null,model:x.model||null,serial_number:x.imouDeviceId||null,status:x.status,active:x.status==='active',manufacturer:x.manufacturer||'',codec:x.codec||'auto',event_type:x.eventType||'motion',notes:x.notes||'',camera_plan_id:x.cameraPlanId||null,sale_price:x.salePrice===null||x.salePrice===''?null:Number(x.salePrice),connection_mode:x.connectionMode||'imou',local_host:x.localHost||'',rtsp_port:Number(x.rtspPort||554),rtsp_path:x.rtspPath||'',local_test:x.localTest||null,updated_at:stamp}}
+ throw Error('Tipo de registo desconhecido.');
+}
+const tableFor={plans:'plans',cameraPlans:'camera_plans',resellers:'resellers',clients:'clients',locations:'installations',cameras:'cameras'};
+async function upsertRows(kind,rows,records){
+ if(!rows.length)return;
+ const body=rows.map(x=>toDb(kind,x,records));
+ const r=await rest(tableFor[kind]+'?on_conflict=id',{method:'POST',headers:{Prefer:'resolution=merge-duplicates,return=minimal'},body:JSON.stringify(body)});
+ if(!r.ok){const j=await r.json().catch(()=>({}));throw Error(j.message||j.hint||'Erro ao guardar '+LABEL[kind]+'.')}
+}
+async function deleteIds(kind,ids){
+ if(!ids.length)return;
+ const r=await rest(tableFor[kind]+'?id=in.('+ids.join(',')+')',{method:'DELETE'});
+ if(!r.ok){const j=await r.json().catch(()=>({}));throw Error(j.message||j.hint||'Erro ao eliminar '+LABEL[kind]+'.')}
+}
+function priceRows(records){
+ const out=[];
+ for(const r of records.resellers)for(const [cameraPlanId,price] of Object.entries(r.salePrices||{}))out.push({reseller_id:r.id,camera_plan_id:cameraPlanId,price:Number(price||0),updated_at:new Date().toISOString()});
+ return out;
+}
+async function syncPrices(before,after){
+ const b=new Map(priceRows(before).map(x=>[x.reseller_id+'|'+x.camera_plan_id,x])),a=new Map(priceRows(after).map(x=>[x.reseller_id+'|'+x.camera_plan_id,x]));
+ const changed=[...a.entries()].filter(([k,v])=>!b.has(k)||Number(b.get(k).price)!==Number(v.price)).map(([,v])=>v);
+ if(changed.length){const r=await rest('reseller_sale_prices?on_conflict=reseller_id,camera_plan_id',{method:'POST',headers:{Prefer:'resolution=merge-duplicates,return=minimal'},body:JSON.stringify(changed)});if(!r.ok){const j=await r.json().catch(()=>({}));throw Error(j.message||j.hint||'Erro nos preços de revenda.')}}
+ for(const [k,v] of b)if(!a.has(k)){const r=await rest('reseller_sale_prices?reseller_id=eq.'+v.reseller_id+'&camera_plan_id=eq.'+v.camera_plan_id,{method:'DELETE'});if(!r.ok)throw Error('Erro ao eliminar preço de revenda.')}
+}
+async function writeActivity(changes,before,after){
+ if(!changes.length)return;
+ const rows=changes.map(ch=>{
+  const src=(after[ch.kind]||[]).find(x=>x.id===ch.id)||(before[ch.kind]||[]).find(x=>x.id===ch.id)||{};
+  return {actor_user_id:S.user.id,reseller_id:resellerOf(ch.kind,src,ch.action==='deleted'?before:after),entity_type:ch.kind,entity_id:ch.id,action:ch.action,detail:ch.detail};
+ });
+ const r=await rest('activity_log',{method:'POST',headers:{Prefer:'return=minimal'},body:JSON.stringify(rows)});
+ if(!r.ok){const j=await r.json().catch(()=>({}));throw Error(j.message||j.hint||'Dados guardados, mas o histórico não foi registado.')}
 }
 async function save(records,msg='Alterações guardadas.'){
- validate(records);const activity=[...diff(S.ws.records,records),...S.ws.activity].slice(0,80),next=S.ws.revision+1;let r;
- if(!S.hasSnapshot)r=await rest('workspace_snapshots',{method:'POST',headers:{Prefer:'return=representation'},body:JSON.stringify({user_id:S.user.id,records,activity,revision:1})});
- else r=await rest('workspace_snapshots?user_id=eq.'+S.user.id+'&revision=eq.'+S.ws.revision,{method:'PATCH',headers:{Prefer:'return=representation'},body:JSON.stringify({records,activity,revision:next,updated_at:new Date().toISOString()})});
- const j=await r.json().catch(()=>[]);if(!r.ok)throw Error(j.message||'Erro ao guardar.');if(!j.length)throw Error('Os dados foram alterados noutra janela. Atualiza e tenta novamente.');
- S.hasSnapshot=true;S.ws={records,activity,revision:next};toast(msg,'success');render();
+ validate(records);
+ const before=S.ws.records,changes=diff(before,records),changedByKind={};
+ for(const k of Object.keys(EMPTY)){const b=new Map(before[k].map(x=>[x.id,JSON.stringify(x)]));changedByKind[k]=records[k].filter(x=>!b.has(x.id)||b.get(x.id)!==JSON.stringify(x))}
+ const removed={};for(const k of Object.keys(EMPTY)){const a=new Set(records[k].map(x=>x.id));removed[k]=before[k].filter(x=>!a.has(x.id)).map(x=>x.id)}
+ try{
+  await upsertRows('plans',changedByKind.plans,records);
+  await upsertRows('cameraPlans',changedByKind.cameraPlans,records);
+  await upsertRows('resellers',changedByKind.resellers,records);
+  await upsertRows('clients',changedByKind.clients,records);
+  await upsertRows('locations',changedByKind.locations,records);
+  await upsertRows('cameras',changedByKind.cameras,records);
+  await syncPrices(before,records);
+  await deleteIds('cameras',removed.cameras);
+  await deleteIds('locations',removed.locations);
+  await deleteIds('clients',removed.clients);
+  await deleteIds('resellers',removed.resellers);
+  await deleteIds('cameraPlans',removed.cameraPlans);
+  await deleteIds('plans',removed.plans);
+  await writeActivity(changes,before,records);
+  await load();
+  toast(msg,'success');render();
+ }catch(e){toast(e instanceof Error?e.message:'Não foi possível guardar.','error');throw e}
 }
 
 function logo(){return '<span class="brand-mark">'+icon('shield')+'</span><div class="brand-copy"><strong>vigia<span>cloud</span></strong><small>VIDEOVIGILÂNCIA POR EVENTOS</small></div>'}
